@@ -1,0 +1,19 @@
+{
+  "name": "agent-skills-toolkit",
+  "version": "1.0.0",
+  "description": "Production-grade, token-optimized skills for autonomous AI coding agents (deep-tester, telescope, single-pass-executor, grill, learn, skill-creator).",
+  "suggestedPrompts": [
+    "Run telescope to orchestrate and decompose my requirements into a DAG",
+    "Use deep-tester to generate a multi-vector test matrix for my code",
+    "Apply grill protocol for an adversarial review of my architecture",
+    "Execute single-pass-executor to implement with upfront contract verification"
+  ],
+  "skills": [
+    "skills/deep-tester",
+    "skills/telescope",
+    "skills/skill-creator",
+    "skills/single-pass-executor",
+    "skills/grill",
+    "skills/learn"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "akshayskhurd-agent-skills",
+  "description": "Production-grade agent skills toolkit for deep testing, telescope orchestration, single-pass execution, and grill audits",
+  "owner": {
+    "name": "akshayskhurd"
+  },
+  "plugins": [
+    {
+      "name": "agent-skills",
+      "description": "Production-grade agent skills toolkit (deep-tester, telescope, single-pass-executor, grill, learn, skill-creator)",
+      "author": {
+        "name": "akshayskhurd"
+      },
+      "category": "development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/akshayskhurd/agent-skills.git"
+      }
+    }
+  ]
+}

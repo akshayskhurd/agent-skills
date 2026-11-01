@@ -1,0 +1,56 @@
+{
+  "project": "Agent Skills Toolkit Comprehensive Review",
+  "high_level_objective": "Telescope dual-lens audit across 6 skills, CLI scripts, multi-harness manifests, test matrices, and zero-defect compliance",
+  "architecture_decisions": [],
+  "clarifications_needed": [],
+  "tasks": [
+    {
+      "id": "task-audit-skills-contract",
+      "title": "Audit Skills Frontmatter, Directives & References",
+      "spec": "Scrutinize all 6 skills for YAML schema, strict imperative directives, zero hedge words, and valid progressive references",
+      "depends_on": [],
+      "status": "COMPLETED",
+      "notes": "Passed YAML frontmatter validation and 100% of relative progressive disclosure links verified"
+    },
+    {
+      "id": "task-audit-tooling-scripts",
+      "title": "Audit Internal CLI Scripts & Safe Execution",
+      "spec": "Scrutinize matrix_generator, orchestrate_dag, scaffold_skill, verify_contracts, grill_checker, instruction_updater, and installer",
+      "depends_on": [
+        "task-audit-skills-contract"
+      ],
+      "status": "COMPLETED",
+      "notes": "Zero dynamic eval vulnerabilities across 9 CLI scripts; all return exit code 0 on --help"
+    },
+    {
+      "id": "task-audit-manifests-harnesses",
+      "title": "Audit Multi-Harness Manifests & Compatibility",
+      "spec": "Verify plugin.json, .claude-plugin/, package.json, bin runner, .agents symlink, AGENTS.md, and OpenCode API discovery",
+      "depends_on": [
+        "task-audit-tooling-scripts"
+      ],
+      "status": "COMPLETED",
+      "notes": "Live verified Antigravity LS, Claude plugin/marketplace manifests, OpenCode API indexing, and Node bin runner"
+    },
+    {
+      "id": "task-audit-test-coverage",
+      "title": "Audit & Execute Complete Verification Test Suite",
+      "spec": "Execute all 49 unit and E2E scenario tests and run grill_checker gate scan across all files",
+      "depends_on": [
+        "task-audit-manifests-harnesses"
+      ],
+      "status": "COMPLETED",
+      "notes": "100% of unit and scenario tests passed (49/49) across skill-creator, telescope, deep-tester, and installer"
+    },
+    {
+      "id": "task-audit-macro-synthesis",
+      "title": "Macro Grill Review & Perspective Synthesis",
+      "spec": "Synthesize 9-persona architectural grill, verify zero PII/host leaks, and render living PERSPECTIVE.md",
+      "depends_on": [
+        "task-audit-test-coverage"
+      ],
+      "status": "COMPLETED",
+      "notes": "Full 9-persona macro architecture certified; rendered living PERSPECTIVE.md"
+    }
+  ]
+}

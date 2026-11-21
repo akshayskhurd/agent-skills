@@ -21,6 +21,8 @@ The agent **MUST NOT** skim, summarize, or hedge. It **MUST** inspect every line
 4. **Convergence to Zero Defects**: Iterate review and fix passes until 0 defects remain across all activated personas.
 5. **Circuit-Breaker Safety**: Stop at **5 passes maximum**. If defects persist, escalate with a conflict matrix.
 6. **Token-Efficiency Invariant**: Report findings via compact issue tables and targeted diffs. **NEVER** re-dump full unmodified source files in chat.
+7. **Anti-Piecemeal Scrutiny Invariant**: Pass 1 **MUST** execute an exhaustive, 360-degree scrutiny across all applicable personas, platform boundaries, OS/shell execution semantics, concurrency/subagents, and serialization schemas simultaneously. Pass $N \ge 2$ **MUST ONLY** audit the surgical remediations for regressions or semantic breaks. Discovering uninspected first-order platform or protocol defects in Pass $N \ge 2$ constitutes a failure of Grill protocol rigor.
+8. **Ground-Truth Platform Preflight**: Before auditing any plan or implementation that interacts with host runtimes, lifecycle hooks, external APIs, or operating system subprocesses, the agent **MUST** mechanically verify what the platform physically supports (inspecting official schema references, stdin/stdout payloads, memory persistence models, and daemon behavior). Speculative assumptions about platform capabilities are **STRICTLY PROHIBITED**.
 
 ---
 
@@ -79,10 +81,12 @@ flowchart TD
 ```
 
 ### Stage 1: Scope & Lazy Persona Loading
-1. Read target artifact using `read_file` (in 250-line chunks if $>500$ lines).
-2. Evaluate Section 2 router criteria. Lazily load **only** the matched persona `.md` files.
+1. Execute Ground-Truth Platform Preflight: Verify physical host, API, and runtime constraints before auditing designs.
+2. Read target artifact using `read_file` (in 250-line chunks if $>500$ lines).
+3. Evaluate Section 2 router criteria. Lazily load **only** the matched persona `.md` files.
 
 ### Stage 2: Adversarial Interrogation
+- Execute full 360-degree sweep on Pass 1 across all loaded personas, runtime mechanics, OS/shell execution, concurrency, and serialization schemas.
 - Scan lines sequentially using the loaded personas.
 - Formulate findings matrix: exact line, persona, failure scenario, and imperative directive.
 

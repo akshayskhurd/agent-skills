@@ -22,6 +22,7 @@ Every skill is built on two-tier progressive disclosure, strictly imperative dir
 4. **`single-pass-executor`**: Zero-defect contract executor (`skills/single-pass-executor/scripts/verify_contracts.py`).
 5. **`grill`**: Exhaustive 9-persona 5W1H adversarial review gate (`skills/grill/scripts/grill_checker.py`).
 6. **`learn`**: Memory and rule distillation engine (`skills/learn/scripts/instruction_updater.py`).
+7. **`leanctx`**: Universal zero-drift context optimizer and living state ledger (`skills/leanctx/scripts/gate_tool.py`).
 
 ---
 
@@ -34,6 +35,7 @@ python3 skills/skill-creator/tests/test_skills.py
 python3 skills/telescope/tests/test_telescope.py
 python3 skills/telescope/tests/verify_scenarios.py
 python3 skills/deep-tester/tests/test_deep_tester.py
+python3 skills/leanctx/tests/test_leanctx.py
 
 # Run Grill audit on modified files
 python3 skills/grill/scripts/grill_checker.py --file <file>

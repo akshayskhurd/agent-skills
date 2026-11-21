@@ -16,6 +16,7 @@ Every skill in this repository is built on **two-tier progressive disclosure**, 
 | **[`single-pass-executor`](./skills/single-pass-executor)** | Execution | Enforce first-pass accuracy and eliminate trial-and-error debugging via upfront contracts and static gates. | `python3 scripts/verify_contracts.py` |
 | **[`grill`](./skills/grill)** | Review & Audit | Exhaustive 9-persona 5W1H adversarial review and surgical remediation loop for code, PRs, and plans. | `python3 scripts/grill_checker.py` |
 | **[`learn`](./skills/learn)** | Memory & Rules | Autonomously extract, distill, and persist user corrections and operational breakthroughs into persistent rules. | `python3 scripts/instruction_updater.py` |
+| **[`leanctx`](./skills/leanctx)** | Context Optimization | Universal zero-drift context optimizer, ingress noise gate, and atomic living state ledger across any harness. | `python3 scripts/gate_tool.py` |
 
 ---
 

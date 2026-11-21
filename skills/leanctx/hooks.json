@@ -1,0 +1,38 @@
+{
+  "leanctx-gate": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 scripts/session_init.py"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command|read_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/gate_tool.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/update_ledger.py"
+          }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 scripts/inject_anchor.py"
+      }
+    ]
+  }
+}

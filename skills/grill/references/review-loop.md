@@ -48,10 +48,12 @@ The Grill skill enforces an autonomous, iterative convergence loop. Remediation 
 - Read the entire file or artifact without skipping any lines.
 - Record the exact line count, exported symbols, public APIs, and documented goals.
 - Establish the baseline behavioral invariant: *"What must this component do?"*
+- Execute Ground-Truth Platform Preflight: Verify physical host, API, and runtime constraints before reviewing designs.
 
-### Step 2: Line-by-Line Persona Audit (Pass N)
+### Step 2: Line-by-Line Persona Audit (Pass 1 Exhaustive 360-Degree Sweep)
 - Walk sequentially through every line $1 \dots L$.
-- Apply all 9 personas and 5W1H counter-questions.
+- Apply all 9 personas and 5W1H counter-questions simultaneously.
+- Scrutinize system boundaries, exact serialization schemas, subagent concurrency, OS/shell execution environments, and fail-open/closed policies.
 - Populate the **Issue Detection Matrix**:
   ```text
   [PASS N - ISSUE #1]
@@ -79,8 +81,8 @@ Before proceeding to the next pass, the agent **MUST** verify the 3 Semantic Inv
 
 ### Step 5: Termination, Circuit Breaking, or Recurse
 - If issues were found and fixed in Pass $N$, the agent **MUST** execute Pass $N+1$.
-- Pass $N+1$ scrutinizes the updated code from line 1 to the end.
-- If Pass $N+1$ uncovers secondary defects (e.g., a newly added parameter is unvalidated), fix and repeat.
+- Pass $N+1$ scrutinizes the updated code strictly to verify that the applied remediations did not introduce regressions.
+- **Anti-Piecemeal Scrutiny Invariant**: Pass $N+1$ **MUST NEVER** uncover uninspected first-order platform or protocol defects that should have been caught on Pass 1. Discovering uninspected baseline defects in Pass $N \ge 2$ signifies an incomplete Pass 1 and protocol violation.
 - **Circuit Breaker Constraint**: The loop **MUST NEVER** exceed 5 passes ($N \le 5$). If pass 5 completes with remaining defects, the agent **MUST** abort further autonomous modifications and output an Escalation Matrix detailing the oscillating or conflicting requirements.
 - **Termination Condition**: When Pass $K$ ($K \le 5$) completes with **0 issues across all 9 personas**, the loop terminates with Zero-Defect Certification.
 

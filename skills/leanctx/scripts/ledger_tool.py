@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from typing import Dict, Any
 
 
@@ -20,23 +21,27 @@ def get_ledger_path(workspace_root: str = None, session_id: str = None) -> str:
 
 
 def load_ledger(ledger_path: str) -> Dict[str, Any]:
+    default_ledger = {
+        "version": 1,
+        "rank1_root_intent": {"goal": "", "constraints": [], "version": 1, "amendment_history": []},
+        "rank2_active_state": {"current_dag_node": "INITIALIZE", "description": ""},
+        "rank3_semantic_ledger": {"modified_files": {}, "decisions": [], "rejected_approaches": []}
+    }
     if not os.path.exists(ledger_path):
-        return {
-            "version": 1,
-            "rank1_root_intent": {"goal": "", "constraints": []},
-            "rank2_active_state": {"current_dag_node": "INITIALIZE", "description": ""},
-            "rank3_semantic_ledger": {"modified_files": {}, "decisions": []}
-        }
+        return default_ledger
     try:
         with open(ledger_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            data.setdefault("version", 1)
+            data.setdefault("rank1_root_intent", {}).setdefault("goal", "")
+            data.setdefault("rank1_root_intent", {}).setdefault("constraints", [])
+            data.setdefault("rank2_active_state", {}).setdefault("current_dag_node", "INITIALIZE")
+            data.setdefault("rank3_semantic_ledger", {}).setdefault("modified_files", {})
+            data.setdefault("rank3_semantic_ledger", {}).setdefault("decisions", [])
+            data.setdefault("rank3_semantic_ledger", {}).setdefault("rejected_approaches", [])
+            return data
     except Exception:
-        return {
-            "version": 1,
-            "rank1_root_intent": {"goal": "", "constraints": []},
-            "rank2_active_state": {"current_dag_node": "INITIALIZE", "description": ""},
-            "rank3_semantic_ledger": {"modified_files": {}, "decisions": []}
-        }
+        return default_ledger
 
 
 def save_ledger_atomic(ledger_path: str, data: Dict[str, Any]) -> None:
@@ -56,8 +61,34 @@ def cmd_init(args):
     data["rank1_root_intent"]["goal"] = args.goal
     if args.constraints:
         data["rank1_root_intent"]["constraints"] = [c.strip() for c in args.constraints.split(";") if c.strip()]
+    data["rank1_root_intent"]["version"] = 1
+    data["rank1_root_intent"]["amendment_history"] = []
     save_ledger_atomic(path, data)
     print(f"Initialized leanctx ledger at: {path}")
+
+
+def cmd_amend_intent(args):
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
+    data = load_ledger(path)
+    root = data.setdefault("rank1_root_intent", {})
+    history = root.setdefault("amendment_history", [])
+    prev_goal = root.get("goal", "")
+    prev_constraints = list(root.get("constraints", []))
+
+    if args.goal:
+        root["goal"] = args.goal
+    if args.constraints is not None:
+        root["constraints"] = [c.strip() for c in args.constraints.split(";") if c.strip()]
+
+    history.append({
+        "timestamp": int(time.time()),
+        "reason": args.reason,
+        "previous_goal": prev_goal,
+        "previous_constraints": prev_constraints
+    })
+    root["version"] = root.get("version", 1) + 1
+    save_ledger_atomic(path, data)
+    print(f"Amended root intent (version {root['version']}) per user authorization: {args.reason}")
 
 
 def cmd_set_task(args):
@@ -79,11 +110,25 @@ def cmd_add_decision(args):
     print(f"Added decision to ledger: {args.text}")
 
 
+def cmd_add_rejection(args):
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
+    data = load_ledger(path)
+    rejections = data.setdefault("rank3_semantic_ledger", {}).setdefault("rejected_approaches", [])
+    entry = f"{args.approach} -> REJECTED: {args.reason}"
+    rejections.append(entry)
+    save_ledger_atomic(path, data)
+    print(f"Recorded rejected approach: {entry}")
+
+
 def cmd_add_file(args):
     path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     files = data.setdefault("rank3_semantic_ledger", {}).setdefault("modified_files", {})
-    files[args.file] = args.status
+    if getattr(args, "symbols", None):
+        symbols_list = [s.strip() for s in args.symbols.split(";") if s.strip()]
+        files[args.file] = {"status": args.status, "symbols": symbols_list}
+    else:
+        files[args.file] = args.status
     save_ledger_atomic(path, data)
     print(f"Recorded file state: {args.file} -> {args.status}")
 
@@ -108,6 +153,7 @@ def cmd_rehydrate(args):
     active = data.get("rank2_active_state", {}).get("current_dag_node", "INITIALIZE")
     desc = data.get("rank2_active_state", {}).get("description", "")
     decisions = data.get("rank3_semantic_ledger", {}).get("decisions", [])
+    rejections = data.get("rank3_semantic_ledger", {}).get("rejected_approaches", [])
     files = data.get("rank3_semantic_ledger", {}).get("modified_files", {})
 
     print("=" * 60)
@@ -120,8 +166,20 @@ def cmd_rehydrate(args):
         print(f"• VERIFIED DECISIONS ({len(decisions)}):")
         for d in decisions[-5:]:
             print(f"  - {d}")
+    if rejections:
+        print(f"• DEAD ENDS / REJECTED APPROACHES ({len(rejections)}):")
+        for r in rejections[-5:]:
+            print(f"  - ⛔ {r}")
     if files:
-        print(f"• TOUCHED FILES ({len(files)}): {', '.join(sorted(list(files.keys()))[:8])}")
+        print(f"• TOUCHED FILES & PUBLIC SIGNATURES ({len(files)}):")
+        for f_path, meta in list(files.items())[:8]:
+            if isinstance(meta, dict) and meta.get("symbols"):
+                syms = ", ".join(meta["symbols"])
+                print(f"  - {f_path}: {syms}")
+            elif isinstance(meta, dict):
+                print(f"  - {f_path} ({meta.get('status', 'modified')})")
+            else:
+                print(f"  - {f_path} ({meta})")
     print("=" * 60)
 
 
@@ -133,16 +191,20 @@ def cmd_status(args):
     data = load_ledger(path)
     files_count = len(data.get("rank3_semantic_ledger", {}).get("modified_files", {}))
     decisions_count = len(data.get("rank3_semantic_ledger", {}).get("decisions", []))
-    print(f"Status: Active | Files Tracked: {files_count} | Decisions: {decisions_count} | Path: {path}")
+    rejections_count = len(data.get("rank3_semantic_ledger", {}).get("rejected_approaches", []))
+    print(f"Status: Active | Files Tracked: {files_count} | Decisions: {decisions_count} | Dead Ends: {rejections_count} | Path: {path}")
 
 
 def cmd_anchor(args):
     path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     goal = data.get("rank1_root_intent", {}).get("goal", "Execute plan")
+    constraints = data.get("rank1_root_intent", {}).get("constraints", [])
+    constraints_str = "; ".join(constraints) if constraints else "None"
     active = data.get("rank2_active_state", {}).get("current_dag_node", "INITIALIZE")
     desc = data.get("rank2_active_state", {}).get("description", "")
-    anchor = f"[leanctx-anchor] GOAL: {goal} | ACTIVE: {active} ({desc}) | STATE: .agents/memory/LEDGER.json"
+    ledger_file = os.path.basename(path)
+    anchor = f"[leanctx-anchor] GOAL: {goal} | CONSTRAINTS: {constraints_str} | ACTIVE: {active} ({desc}) | STATE: {ledger_file}"
     print(anchor)
 
 
@@ -157,6 +219,12 @@ def main():
     init_p.add_argument("--constraints", "-c", help="Semicolon-separated negative constraints")
     init_p.set_defaults(func=cmd_init)
 
+    amend_p = subparsers.add_parser("amend-intent", help="Amend root intent or constraints per explicit user authorization")
+    amend_p.add_argument("--goal", "-g", help="Updated user goal")
+    amend_p.add_argument("--constraints", "-c", help="Updated semicolon-separated constraints")
+    amend_p.add_argument("--reason", "-r", required=True, help="Explicit user instruction prompting amendment")
+    amend_p.set_defaults(func=cmd_amend_intent)
+
     task_p = subparsers.add_parser("set-task", help="Set active task in DAG")
     task_p.add_argument("--id", required=True, help="Task ID or milestone name")
     task_p.add_argument("--desc", help="Short description of task")
@@ -166,9 +234,15 @@ def main():
     dec_p.add_argument("--text", "-t", required=True, help="Decision description")
     dec_p.set_defaults(func=cmd_add_decision)
 
+    rej_p = subparsers.add_parser("add-rejection", help="Record failed path / dead-end approach to prevent repeat attempts")
+    rej_p.add_argument("--approach", "-a", required=True, help="Description of attempted approach")
+    rej_p.add_argument("--reason", "-r", required=True, help="Why approach failed or was rejected")
+    rej_p.set_defaults(func=cmd_add_rejection)
+
     file_p = subparsers.add_parser("add-file", help="Record modified file in ledger")
     file_p.add_argument("--file", "-f", required=True, help="File path relative to workspace")
     file_p.add_argument("--status", default="modified", help="Status description")
+    file_p.add_argument("--symbols", "-s", help="Public exported symbols/signatures (semicolon-separated)")
     file_p.set_defaults(func=cmd_add_file)
 
     show_p = subparsers.add_parser("show", help="Display current ledger contents")

@@ -26,10 +26,12 @@ def main():
             ledger = json.load(f)
 
         goal = ledger.get("rank1_root_intent", {}).get("goal", "Execute active tasks")
+        constraints = ledger.get("rank1_root_intent", {}).get("constraints", [])
+        constraints_str = "; ".join(constraints) if constraints else "None"
         active = ledger.get("rank2_active_state", {}).get("current_dag_node", "INITIALIZE")
 
         # Bounded micro-anchor: <= 60 tokens
-        anchor_text = f"[leanctx-anchor] GOAL: {goal} | ACTIVE: {active} | STATE: .agents/memory/LEDGER.json"
+        anchor_text = f"[leanctx-anchor] GOAL: {goal} | CONSTRAINTS: {constraints_str} | ACTIVE: {active} | STATE: .agents/memory/LEDGER.json"
 
         step = {
             "systemMessage": {

@@ -59,7 +59,11 @@ Define `<SCRIPTS>` as the resolved directory path. On Windows environments witho
 ```
 
 - **Ranks 1–3**: Maintained persistently on disk in `.agents/memory/LEDGER.json`. Restored instantly via `ledger_tool.py rehydrate` post-compaction.
-- **Ranks 5–6**: Gated at ingress. Raw stdout and line dumps are written to disk; only concise summaries or root-cause error lines enter context history.
+  - Rank 1: Root goal and non-negotiable negative constraints ($\le 500$ tokens). Amended ONLY via explicit user authorization.
+  - Rank 2: Active DAG milestone and active blocker state ($\le 500$ tokens).
+  - Rank 3: Verified technical decisions, modified files with exact public symbols, and rejected dead-end paths ($\le 1,500$ tokens).
+- **Rank 4**: Conversational working buffer managed by host harness windowing ($\le 4,000$ tokens).
+- **Ranks 5–6**: Gated at ingress. Raw stdout and line dumps write to disk; only concise summaries or root-cause error lines enter context history.
 
 ---
 
@@ -94,6 +98,13 @@ flowchart TD
      --id "<Task ID>" \
      --desc "<Task Objective>"
    ```
+3. If the user explicitly amends the project goal or constraints mid-session, log the authorized amendment:
+   ```bash
+   python3 "<SCRIPTS>/ledger_tool.py" amend-intent \
+     --goal "<Updated Goal>" \
+     --constraints "<Amended Constraints>" \
+     --reason "<User instruction rationale>"
+   ```
 
 ### Phase 3: Execution via Output Sandboxing & Subagent Sharding
 1. **High-Volume Command Execution**:
@@ -102,8 +113,8 @@ flowchart TD
      ```bash
      python3 "<SCRIPTS>/lean_run.py" "<test_or_build_command>"
      ```
-   - On success: Emits tail 25 lines.
-   - On failure: Emits Head 15 lines, root-cause error lines from the middle of the log, and Tail 15 lines.
+   - On success: Emits tail 25 lines if total lines $> 30$.
+   - On failure: Emits Head 15 lines, root-cause error lines from the middle of the log, and Tail 15 lines if total lines $> 50$ (maximum 65 lines).
 2. **Drilling Down into Full Logs on Command Failure**:
    - If the summary misses root-cause stack traces, inspect the full log saved in `/tmp/leanctx/<id>/last_exec.log`:
      ```bash
@@ -123,19 +134,26 @@ flowchart TD
 ### Phase 4: State Condensation & Compaction Recovery
 1. After completing an execution milestone, update modified files and decisions in the ledger:
    ```bash
-   python3 "<SCRIPTS>/ledger_tool.py" add-file --file "<path>" --status "verified"
+   python3 "<SCRIPTS>/ledger_tool.py" add-file --file "<path>" --status "verified" --symbols "<exported signatures>"
    python3 "<SCRIPTS>/ledger_tool.py" add-decision --text "<Verified decision>"
    ```
-2. Emit the single-line micro-anchor ($\le 60$ tokens) in active context:
+2. When hitting a dead end or rejecting a failed path, record the negative knowledge to eliminate repeat attempts:
+   ```bash
+   python3 "<SCRIPTS>/ledger_tool.py" add-rejection \
+     --approach "<Attempted Approach>" \
+     --reason "<Why it failed or was rejected>"
+   ```
+3. Emit the single-line micro-anchor ($\le 60$ tokens) in active context:
    ```bash
    python3 "<SCRIPTS>/ledger_tool.py" anchor
    ```
-3. **Post-Compaction Recovery Protocol**:
+   *Format:* `[leanctx-anchor] GOAL: <Goal> | CONSTRAINTS: <Constraints> | ACTIVE: <Task ID> (<Task Desc>) | STATE: LEDGER.json`
+4. **Post-Compaction Recovery Protocol**:
    - When the host harness triggers context compaction or when resuming an existing session:
      ```bash
      python3 "<SCRIPTS>/ledger_tool.py" rehydrate
      ```
-   - Restores root intent, negative constraints, active task, and touched files without asking the user to repeat requirements.
+   - Restores root intent, non-negotiable negative constraints, active task, verified decisions, dead ends, and touched file signatures without asking the user to repeat requirements.
 
 ---
 

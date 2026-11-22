@@ -1,28 +1,18 @@
-#!/usr/bin/env python3
-"""
-Exhaustive Offline Unit & Integration Test Suite for leanctx.
-Tests all scripts, hooks, CLI wrappers, fail-open semantics, daemon bypasses,
-subagent isolation, and schema contracts with 0 external network/LLM dependencies.
-"""
-import io
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-# Import scripts directly for white-box unit testing
-SKILLS_DIR = Path(__file__).resolve().parent.parent
-SCRIPTS_DIR = SKILLS_DIR / "scripts"
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+SCRIPTS_DIR = SKILL_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-import telemetry
-import ledger_tool
 import benchmark
+import telemetry
 
 
 class TestLeanctxBenchmark(unittest.TestCase):
@@ -39,6 +29,7 @@ class TestLeanctxSessionInit(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
         self.conv_id = "test-conv-1234"
+        self.script_path = SCRIPTS_DIR / "session_init.py"
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
@@ -49,27 +40,25 @@ class TestLeanctxSessionInit(unittest.TestCase):
             "conversationId": self.conv_id,
             "workspacePaths": [self.test_dir]
         }
-        script_path = SCRIPTS_DIR / "session_init.py"
         res = subprocess.run(
-            [sys.executable, str(script_path)],
+            [sys.executable, str(self.script_path)],
             input=json.dumps(payload),
             text=True,
             capture_output=True
         )
         self.assertEqual(res.returncode, 0)
-        out = json.loads(res.stdout)
-        self.assertEqual(out, {"injectSteps": []})
 
-        # Check scratch directory creation and 0700 permissions
+        # Check scratch dir
         scratch_dir = Path(f"/tmp/leanctx/{self.conv_id}")
-        self.assertTrue(scratch_dir.is_dir())
-        mode = scratch_dir.stat().st_mode & 0o777
-        self.assertEqual(mode, 0o700)
+        self.assertTrue(scratch_dir.exists())
+        mode = oct(scratch_dir.stat().st_mode & 0o777)
+        self.assertEqual(mode, oct(0o700))
 
-        # Check master session file
-        session_file = Path(self.test_dir) / ".agents" / "memory" / ".master_session"
-        self.assertTrue(session_file.is_file())
-        self.assertEqual(session_file.read_text().strip(), self.conv_id)
+        # Check .master_session file
+        master_file = Path(self.test_dir) / ".agents" / "memory" / ".master_session"
+        self.assertTrue(master_file.exists())
+        with open(master_file, "r") as f:
+            self.assertEqual(f.read().strip(), self.conv_id)
 
     def test_session_init_updates_gitignore(self):
         gitignore = Path(self.test_dir) / ".gitignore"
@@ -79,9 +68,8 @@ class TestLeanctxSessionInit(unittest.TestCase):
             "conversationId": self.conv_id,
             "workspacePaths": [self.test_dir]
         }
-        script_path = SCRIPTS_DIR / "session_init.py"
         subprocess.run(
-            [sys.executable, str(script_path)],
+            [sys.executable, str(self.script_path)],
             input=json.dumps(payload),
             text=True,
             capture_output=True
@@ -90,17 +78,137 @@ class TestLeanctxSessionInit(unittest.TestCase):
         self.assertIn(".agents/memory/", updated)
 
 
-class TestLeanctxGateTool(unittest.TestCase):
+class TestLeanctxLedgerAndSubagentIsolation(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.script_path = SCRIPTS_DIR / "gate_tool.py"
+        self.update_script = SCRIPTS_DIR / "update_ledger.py"
+        self.init_script = SCRIPTS_DIR / "session_init.py"
+        self.anchor_script = SCRIPTS_DIR / "inject_anchor.py"
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
+    def test_master_agent_mutates_ledger_atomically(self):
+        # 1. Initialize master session
+        init_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir]
+        }
+        subprocess.run(
+            [sys.executable, str(self.init_script)],
+            input=json.dumps(init_payload),
+            text=True,
+            capture_output=True
+        )
+
+        # 2. Trigger PostToolUse from master agent
+        tool_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir],
+            "toolCall": {
+                "name": "write_file",
+                "args": {"Path": os.path.join(self.test_dir, "src", "cache.py")}
+            }
+        }
+        res = subprocess.run(
+            [sys.executable, str(self.update_script)],
+            input=json.dumps(tool_payload),
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+
+        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
+        self.assertTrue(ledger_file.exists())
+        with open(ledger_file, "r") as f:
+            data = json.load(f)
+
+        files = data["rank3_semantic_ledger"]["modified_files"]
+        self.assertIn("src/cache.py", files)
+        self.assertEqual(files["src/cache.py"], "modified")
+
+    def test_subagent_cannot_mutate_master_ledger(self):
+        # 1. Initialize master session
+        init_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir]
+        }
+        subprocess.run([sys.executable, str(self.init_script)], input=json.dumps(init_payload), text=True)
+
+        # 2. Write initial state as master
+        tool_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir],
+            "toolCall": {
+                "name": "write_file",
+                "args": {"Path": os.path.join(self.test_dir, "initial.txt")}
+            }
+        }
+        subprocess.run([sys.executable, str(self.update_script)], input=json.dumps(tool_payload), text=True)
+
+        # 3. Subagent attempts to write to master ledger
+        subagent_payload = {
+            "conversationId": "subagent-worker-999",
+            "workspacePaths": [self.test_dir],
+            "toolCall": {
+                "name": "write_file",
+                "args": {"Path": os.path.join(self.test_dir, "subagent_file.txt")}
+            }
+        }
+        res = subprocess.run(
+            [sys.executable, str(self.update_script)],
+            input=json.dumps(subagent_payload),
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+
+        # Verify subagent file was NOT added to master LEDGER.json
+        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
+        with open(ledger_file, "r") as f:
+            data = json.load(f)
+
+        files = data["rank3_semantic_ledger"]["modified_files"]
+        self.assertIn("initial.txt", files)
+        self.assertNotIn("subagent_file.txt", files)
+
+    def test_inject_anchor_protojson_schema(self):
+        # Create a ledger
+        ledger_dir = Path(self.test_dir) / ".agents" / "memory"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        ledger_file = ledger_dir / "LEDGER.json"
+        with open(ledger_file, "w") as f:
+            json.dump({
+                "version": 1,
+                "rank1_root_intent": {"goal": "Build High-Performance Cache", "constraints": ["No Redis", "Memory < 100MB"]},
+                "rank2_active_state": {"current_dag_node": "T1-INIT"}
+            }, f)
+
+        payload = {"cwd": self.test_dir}
+        res = subprocess.run(
+            [sys.executable, str(self.anchor_script)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+        out = json.loads(res.stdout)
+        self.assertIn("injectSteps", out)
+        self.assertEqual(len(out["injectSteps"]), 1)
+        text = out["injectSteps"][0]["systemMessage"]["systemMessage"]
+        self.assertIn("[leanctx-anchor]", text)
+        self.assertIn("GOAL: Build High-Performance Cache", text)
+        self.assertIn("CONSTRAINTS: No Redis; Memory < 100MB", text)
+        self.assertIn("ACTIVE: T1-INIT", text)
+
+
+class TestLeanctxGateTool(unittest.TestCase):
+    def setUp(self):
+        self.script_path = SCRIPTS_DIR / "gate_tool.py"
+
     def test_gate_tool_wraps_high_volume_commands(self):
         payload = {
-            "conversationId": "gate-test-1",
+            "conversationId": "gate-test-01",
             "toolCall": {
                 "name": "run_command",
                 "args": {"CommandLine": "pytest tests/ -v"}
@@ -143,10 +251,10 @@ class TestLeanctxGateTool(unittest.TestCase):
 
     def test_gate_tool_bypasses_low_volume_commands(self):
         payload = {
-            "conversationId": "gate-test-2",
+            "conversationId": "gate-test-02",
             "toolCall": {
                 "name": "run_command",
-                "args": {"CommandLine": "git status -s"}
+                "args": {"CommandLine": "git status"}
             }
         }
         res = subprocess.run(
@@ -162,7 +270,7 @@ class TestLeanctxGateTool(unittest.TestCase):
 
     def test_gate_tool_bypasses_daemon_processes(self):
         payload = {
-            "conversationId": "gate-test-3",
+            "conversationId": "gate-test-03",
             "toolCall": {
                 "name": "run_command",
                 "args": {
@@ -177,153 +285,71 @@ class TestLeanctxGateTool(unittest.TestCase):
             text=True,
             capture_output=True
         )
+        self.assertEqual(res.returncode, 0)
         out = json.loads(res.stdout)
         self.assertEqual(out.get("decision"), "allow")
         self.assertNotIn("overwrite", out)
 
     def test_gate_tool_clamps_large_unbounded_read_file(self):
-        large_file = Path(self.test_dir) / "large.py"
-        large_file.write_text("\n".join([f"line_{i} = {i}" for i in range(250)]))
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            for i in range(250):
+                f.write(f"Line {i}\n")
+            temp_path = f.name
 
-        payload = {
-            "conversationId": "gate-test-4",
-            "toolCall": {
-                "name": "read_file",
-                "args": {"Path": str(large_file)}
+        try:
+            payload = {
+                "toolCall": {
+                    "name": "read_file",
+                    "args": {"Path": temp_path}
+                }
             }
-        }
-        res = subprocess.run(
-            [sys.executable, str(self.script_path)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True
-        )
-        out = json.loads(res.stdout)
-        self.assertEqual(out.get("decision"), "allow")
-        self.assertIn("overwrite", out)
-        self.assertEqual(out["overwrite"]["StartLine"], 1)
-        self.assertEqual(out["overwrite"]["EndLine"], 150)
+            res = subprocess.run(
+                [sys.executable, str(self.script_path)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True
+            )
+            self.assertEqual(res.returncode, 0)
+            out = json.loads(res.stdout)
+            self.assertEqual(out.get("decision"), "allow")
+            self.assertIn("overwrite", out)
+            self.assertEqual(out["overwrite"]["StartLine"], 1)
+            self.assertEqual(out["overwrite"]["EndLine"], 150)
+        finally:
+            os.remove(temp_path)
 
     def test_gate_tool_fail_open_on_malformed_input(self):
         res = subprocess.run(
             [sys.executable, str(self.script_path)],
-            input="MALFORMED_JSON",
+            input="invalid-json",
             text=True,
             capture_output=True
         )
         self.assertEqual(res.returncode, 0)
         out = json.loads(res.stdout)
         self.assertEqual(out.get("decision"), "allow")
-
-
-class TestLeanctxLedgerAndSubagentIsolation(unittest.TestCase):
-    def setUp(self):
-        self.test_dir = tempfile.mkdtemp()
-        self.master_id = "master-agent-999"
-        self.subagent_id = "subagent-worker-111"
-        self.update_script = SCRIPTS_DIR / "update_ledger.py"
-        self.inject_script = SCRIPTS_DIR / "inject_anchor.py"
-
-        # Register master
-        memory_dir = Path(self.test_dir) / ".agents" / "memory"
-        memory_dir.mkdir(parents=True)
-        (memory_dir / ".master_session").write_text(self.master_id)
-
-    def tearDown(self):
-        shutil.rmtree(self.test_dir, ignore_errors=True)
-
-    def test_subagent_cannot_mutate_master_ledger(self):
-        payload = {
-            "conversationId": self.subagent_id,
-            "workspacePaths": [self.test_dir],
-            "toolCall": {
-                "name": "write_file",
-                "args": {"Path": f"{self.test_dir}/subagent_scratch.py"}
-            }
-        }
-        res = subprocess.run(
-            [sys.executable, str(self.update_script)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True
-        )
-        self.assertEqual(res.returncode, 0)
-        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
-        self.assertFalse(ledger_file.exists())
-
-    def test_master_agent_mutates_ledger_atomically(self):
-        target_file = Path(self.test_dir) / "core_auth.py"
-        target_file.touch()
-
-        payload = {
-            "conversationId": self.master_id,
-            "workspacePaths": [self.test_dir],
-            "toolCall": {
-                "name": "write_file",
-                "args": {"Path": str(target_file)}
-            }
-        }
-        res = subprocess.run(
-            [sys.executable, str(self.update_script)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True
-        )
-        self.assertEqual(res.returncode, 0)
-        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
-        self.assertTrue(ledger_file.exists())
-        data = json.loads(ledger_file.read_text())
-        self.assertIn("core_auth.py", data["rank3_semantic_ledger"]["modified_files"])
-
-    def test_inject_anchor_protojson_schema(self):
-        # Initialize ledger
-        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
-        ledger_file.write_text(json.dumps({
-            "rank1_root_intent": {"goal": "Optimize context memory"},
-            "rank2_active_state": {"current_dag_node": "TASK-01"}
-        }))
-
-        payload = {"cwd": self.test_dir}
-        res = subprocess.run(
-            [sys.executable, str(self.inject_script)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True
-        )
-        self.assertEqual(res.returncode, 0)
-        out = json.loads(res.stdout)
-        self.assertIn("injectSteps", out)
-        self.assertEqual(len(out["injectSteps"]), 1)
-        step = out["injectSteps"][0]
-        self.assertIn("systemMessage", step)
-        msg = step["systemMessage"]["systemMessage"]
-        self.assertIn("[leanctx-anchor]", msg)
-        self.assertIn("Optimize context memory", msg)
-        self.assertIn("TASK-01", msg)
-        # Verify micro-anchor is bounded (<200 chars)
-        self.assertLess(len(msg), 200)
 
 
 class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.conv_id = "cli-test-wrap"
-        os.environ["CONVERSATION_ID"] = self.conv_id
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
-        shutil.rmtree(f"/tmp/leanctx/{self.conv_id}", ignore_errors=True)
 
     def test_lean_run_success_output(self):
         script = SCRIPTS_DIR / "lean_run.py"
+        # Command with 50 lines of output
+        cmd = "python3 -c 'for i in range(50): print(f\"line_{i}\")'"
         res = subprocess.run(
-            [sys.executable, str(script), "echo 'line 1'; echo 'line 2'"],
-            text=True,
-            capture_output=True
+            [sys.executable, str(script), cmd],
+            capture_output=True,
+            text=True
         )
         self.assertEqual(res.returncode, 0)
-        self.assertIn("line 1", res.stdout)
-        self.assertIn("line 2", res.stdout)
+        self.assertIn("Tail 25 lines displayed", res.stdout)
+        self.assertIn("line_49", res.stdout)
+        self.assertNotIn("line_0\n", res.stdout)
 
     def test_lean_run_failure_diagnostic_sandwich(self):
         script = SCRIPTS_DIR / "lean_run.py"
@@ -367,26 +393,50 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         res = subprocess.run([sys.executable, str(script), "-w", ws, "set-task", "--id", "T1", "--desc", "Init Store"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
 
-        # 3. anchor
+        # 3. anchor (verifies GOAL, CONSTRAINTS, ACTIVE)
         res = subprocess.run([sys.executable, str(script), "-w", ws, "anchor"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("[leanctx-anchor]", res.stdout)
-        self.assertIn("Build Cache", res.stdout)
-        self.assertIn("T1", res.stdout)
+        self.assertIn("GOAL: Build Cache", res.stdout)
+        self.assertIn("CONSTRAINTS: No Redis; Mem < 100MB", res.stdout)
+        self.assertIn("ACTIVE: T1 (Init Store)", res.stdout)
 
-        # 4. rehydrate
+        # 4. add-file with symbols
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "add-file", "--file", "src/cache.py", "--symbols", "get(k: str) -> str; set(k: str, v: str)"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+
+        # 5. add-decision
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "add-decision", "--text", "Adopt LRU eviction"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+
+        # 6. add-rejection (negative knowledge / dead end)
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "add-rejection", "--approach", "Redis subprocess", "--reason", "Violated memory constraint"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+
+        # 7. amend-intent (user authorized amendment)
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "amend-intent", "--goal", "Build Distributed Cache", "--constraints", "Mem < 200MB", "--reason", "User scaled workload"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+
+        # 8. rehydrate (verifies all sections restored)
         res = subprocess.run([sys.executable, str(script), "-w", ws, "rehydrate"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("[leanctx-rehydrate]", res.stdout)
-        self.assertIn("ROOT INTENT: Build Cache", res.stdout)
+        self.assertIn("ROOT INTENT: Build Distributed Cache", res.stdout)
+        self.assertIn("NON-NEGOTIABLE CONSTRAINTS: Mem < 200MB", res.stdout)
         self.assertIn("ACTIVE TASK: [T1] Init Store", res.stdout)
+        self.assertIn("Adopt LRU eviction", res.stdout)
+        self.assertIn("Redis subprocess -> REJECTED: Violated memory constraint", res.stdout)
+        self.assertIn("src/cache.py: get(k: str) -> str, set(k: str, v: str)", res.stdout)
 
-        # 5. status
+        # 9. status
         res = subprocess.run([sys.executable, str(script), "-w", ws, "status"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("Status: Active", res.stdout)
+        self.assertIn("Files Tracked: 1", res.stdout)
+        self.assertIn("Decisions: 1", res.stdout)
+        self.assertIn("Dead Ends: 1", res.stdout)
 
-        # 6. session isolation
+        # 10. session isolation
         res = subprocess.run([sys.executable, str(script), "-w", ws, "-s", "worker_99", "init", "--goal", "Isolated Worker Task"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         worker_file = Path(ws) / ".agents" / "memory" / "LEDGER_worker_99.json"

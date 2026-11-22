@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
 """
 PreToolUse Hook for leanctx.
-Selectively gates noisy CLI commands, clamps large unbounded read_file calls,
-and bypasses daemon processes.
+Selectively gates noisy CLI commands, clamps large unbounded read_file calls using streaming bounds,
+and bypasses daemon processes cross-platform.
 """
-import sys
-import os
 import json
+import os
 import re
 import shlex
+import sys
+import tempfile
 
 # Match high-volume build/test commands specifically by executable/subcommand prefix
-# Avoid matching words inside arguments (e.g. git commit -m "fix build", cat test.txt)
 HIGH_VOLUME_PREFIX = re.compile(
-    r"^\s*(?:sudo\s+)?(?:time\s+)?(?:python[0-9.]*\s+-m\s+(?:pytest|unittest)|pytest|cargo\s+(?:test|build|check)|npm\s+(?:test|run\s+(?:test|build))|yarn\s+(?:test|build)|pnpm\s+(?:test|build)|mvn\s+(?:test|compile|package)|gradle\s+(?:test|build)|webpack|tsc|make\b|ctest|go\s+test)",
+    r"^\s*(?:sudo\s+)?(?:time\s+)?(?:uv\s+run\s+|poetry\s+run\s+|npx\s+|pnpm\s+|yarn\s+|npm\s+run\s+)?"
+    r"(?:python[0-9.]*\s+-m\s+(?:pytest|unittest)|pytest|cargo\s+(?:test|build|check|run)|"
+    r"npm\s+(?:test|run\s+(?:test|build))|mvn\s+(?:test|compile|package)|gradle\s+(?:test|build)|"
+    r"webpack|tsc|make\b|ctest|go\s+(?:test|build)|dotnet\s+(?:test|build))",
     re.IGNORECASE
 )
 
-ERROR_PATTERN = re.compile(
-    r"\b(error|fail|failed|failure|exception|traceback|panic|panicked|fatal|syntaxerror|typeerror)\b",
-    re.IGNORECASE
-)
+
+def get_scratch_dir(conv_id: str) -> str:
+    base_temp = tempfile.gettempdir()
+    uid_suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
+    safe_conv = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
+    path = os.path.join(base_temp, f"leanctx{uid_suffix}", safe_conv)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if hasattr(os, "chmod"):
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return path
+
 
 def emit_allow(overwrite=None):
     res = {"decision": "allow"}
@@ -29,18 +42,47 @@ def emit_allow(overwrite=None):
     print(json.dumps(res))
     sys.exit(0)
 
+
+def split_commands_safe(cmd_str: str) -> list:
+    """Split chained shell pipelines safely respecting quotes."""
+    # Split on ; && || only outside single/double quotes
+    parts = []
+    current = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(cmd_str):
+        c = cmd_str[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            current.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            current.append(c)
+        elif (c == ';' or (c in ('&', '|') and i + 1 < len(cmd_str) and cmd_str[i+1] == c)) and not in_single and not in_double:
+            parts.append("".join(current).strip())
+            current = []
+            if c in ('&', '|'):
+                i += 1
+        else:
+            current.append(c)
+        i += 1
+    if current:
+        parts.append("".join(current).strip())
+    return [p for p in parts if p]
+
+
 def is_high_volume_command(cmd: str) -> bool:
     """Evaluate whether command begins with a known high-volume build/test executable."""
     cleaned = cmd.strip()
-    # Check pipelines and chained commands
-    for part in re.split(r"[;&|]+", cleaned):
-        part = part.strip()
+    for part in split_commands_safe(cleaned):
         if HIGH_VOLUME_PREFIX.match(part):
             return True
         # Unbounded find or grep commands
         if re.match(r"^\s*(?:find\s+\S+|grep\s+-r)", part) and not re.search(r"\|\s*(?:head|tail|less)\b", part):
             return True
     return False
+
 
 def handle_run_command(tool_call, conv_id):
     args = tool_call.get("args", {})
@@ -52,13 +94,7 @@ def handle_run_command(tool_call, conv_id):
     if not is_high_volume_command(cmd):
         emit_allow()
 
-    safe_conv_id = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
-    scratch_dir = f"/tmp/leanctx/{safe_conv_id}"
-    try:
-        os.makedirs(scratch_dir, mode=0o700, exist_ok=True)
-    except OSError:
-        os.makedirs(scratch_dir, exist_ok=True)
-
+    scratch_dir = get_scratch_dir(conv_id)
     log_file = os.path.join(scratch_dir, "last_exec.log")
     quoted_log = shlex.quote(log_file)
 
@@ -82,6 +118,7 @@ def handle_run_command(tool_call, conv_id):
     )
     emit_allow(overwrite={"CommandLine": wrapped_cmd})
 
+
 def handle_read_file(tool_call):
     args = tool_call.get("args", {})
     path = args.get("Path", "")
@@ -101,15 +138,22 @@ def handle_read_file(tool_call):
     if end_line is None:
         if os.path.isfile(path):
             try:
+                # Streaming line counter: stop counting at start_line + 150 to prevent memory DoS
+                line_count = 0
+                target_threshold = start_line + 150
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    line_count = sum(1 for _ in f)
-                if (line_count - start_line + 1) > 150:
+                    for _ in f:
+                        line_count += 1
+                        if line_count >= target_threshold:
+                            break
+                if line_count >= target_threshold:
                     emit_allow(overwrite={"StartLine": start_line, "EndLine": start_line + 149})
             except Exception:
                 pass
     elif (end_line - start_line + 1) > 150:
         emit_allow(overwrite={"StartLine": start_line, "EndLine": start_line + 149})
     emit_allow()
+
 
 def main():
     try:
@@ -129,6 +173,7 @@ def main():
         emit_allow()
     except Exception:
         emit_allow()
+
 
 if __name__ == "__main__":
     main()

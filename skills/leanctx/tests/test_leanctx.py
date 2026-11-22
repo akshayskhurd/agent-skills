@@ -15,6 +15,11 @@ import benchmark
 import telemetry
 
 
+def get_expected_scratch_dir(conv_id: str) -> Path:
+    uid_suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
+    return Path(tempfile.gettempdir()) / f"leanctx{uid_suffix}" / conv_id
+
+
 class TestLeanctxBenchmark(unittest.TestCase):
     def test_benchmark_sla_assertions(self):
         results = benchmark.run_benchmark(total_turns=10)
@@ -33,7 +38,9 @@ class TestLeanctxSessionInit(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
-        shutil.rmtree(f"/tmp/leanctx/{self.conv_id}", ignore_errors=True)
+        scratch = get_expected_scratch_dir(self.conv_id)
+        if scratch.exists():
+            shutil.rmtree(scratch, ignore_errors=True)
 
     def test_session_init_creates_secure_scratch_and_registers_master(self):
         payload = {
@@ -49,10 +56,11 @@ class TestLeanctxSessionInit(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
 
         # Check scratch dir
-        scratch_dir = Path(f"/tmp/leanctx/{self.conv_id}")
+        scratch_dir = get_expected_scratch_dir(self.conv_id)
         self.assertTrue(scratch_dir.exists())
-        mode = oct(scratch_dir.stat().st_mode & 0o777)
-        self.assertEqual(mode, oct(0o700))
+        if hasattr(os, "chmod"):
+            mode = oct(scratch_dir.stat().st_mode & 0o777)
+            self.assertEqual(mode, oct(0o700))
 
         # Check .master_session file
         master_file = Path(self.test_dir) / ".agents" / "memory" / ".master_session"
@@ -126,6 +134,41 @@ class TestLeanctxLedgerAndSubagentIsolation(unittest.TestCase):
         files = data["rank3_semantic_ledger"]["modified_files"]
         self.assertIn("src/cache.py", files)
         self.assertEqual(files["src/cache.py"], "modified")
+
+    def test_update_ledger_preserves_public_symbols(self):
+        # Initialize master session
+        init_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir]
+        }
+        subprocess.run([sys.executable, str(self.init_script)], input=json.dumps(init_payload), text=True)
+
+        # Add file with public symbols via ledger_tool.py
+        ledger_script = SCRIPTS_DIR / "ledger_tool.py"
+        subprocess.run([sys.executable, str(ledger_script), "-w", self.test_dir, "add-file", "--file", "src/auth.py", "--symbols", "validate(t: str) -> bool; refresh()"], text=True)
+
+        # Trigger edit_file via update_ledger.py
+        tool_payload = {
+            "conversationId": "master-session-001",
+            "workspacePaths": [self.test_dir],
+            "toolCall": {
+                "name": "edit_file",
+                "args": {"Path": os.path.join(self.test_dir, "src", "auth.py")}
+            }
+        }
+        res = subprocess.run([sys.executable, str(self.update_script)], input=json.dumps(tool_payload), text=True, capture_output=True)
+        self.assertEqual(res.returncode, 0)
+
+        # Verify symbols were preserved and status updated to modified
+        ledger_file = Path(self.test_dir) / ".agents" / "memory" / "LEDGER.json"
+        with open(ledger_file, "r") as f:
+            data = json.load(f)
+
+        auth_meta = data["rank3_semantic_ledger"]["modified_files"]["src/auth.py"]
+        self.assertIsInstance(auth_meta, dict)
+        self.assertEqual(auth_meta["status"], "modified")
+        self.assertIn("validate(t: str) -> bool", auth_meta["symbols"])
+        self.assertIn("refresh()", auth_meta["symbols"])
 
     def test_subagent_cannot_mutate_master_ledger(self):
         # 1. Initialize master session
@@ -207,31 +250,32 @@ class TestLeanctxGateTool(unittest.TestCase):
         self.script_path = SCRIPTS_DIR / "gate_tool.py"
 
     def test_gate_tool_wraps_high_volume_commands(self):
-        payload = {
-            "conversationId": "gate-test-01",
-            "toolCall": {
-                "name": "run_command",
-                "args": {"CommandLine": "pytest tests/ -v"}
+        for cmd in ["pytest tests/ -v", "uv run pytest", "cargo test", "npm run build"]:
+            payload = {
+                "conversationId": "gate-test-01",
+                "toolCall": {
+                    "name": "run_command",
+                    "args": {"CommandLine": cmd}
+                }
             }
-        }
-        res = subprocess.run(
-            [sys.executable, str(self.script_path)],
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True
-        )
-        self.assertEqual(res.returncode, 0)
-        out = json.loads(res.stdout)
-        self.assertEqual(out.get("decision"), "allow")
-        self.assertIn("overwrite", out)
-        overwritten_cmd = out["overwrite"]["CommandLine"]
-        self.assertIn("pytest tests/ -v", overwritten_cmd)
-        self.assertIn("INITIAL OUTPUT (Head 15)", overwritten_cmd)
-        self.assertIn("FINAL OUTPUT (Tail 15)", overwritten_cmd)
+            res = subprocess.run(
+                [sys.executable, str(self.script_path)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True
+            )
+            self.assertEqual(res.returncode, 0)
+            out = json.loads(res.stdout)
+            self.assertEqual(out.get("decision"), "allow")
+            self.assertIn("overwrite", out)
+            overwritten_cmd = out["overwrite"]["CommandLine"]
+            self.assertIn(cmd, overwritten_cmd)
+            self.assertIn("INITIAL OUTPUT (Head 15)", overwritten_cmd)
+            self.assertIn("FINAL OUTPUT (Tail 15)", overwritten_cmd)
 
     def test_gate_tool_ignores_git_commit_and_cat(self):
         # Verify overly broad regex bug is fixed: commit messages with 'build' or 'test' are not wrapped
-        for cmd in ['git commit -m "fix build and test"', 'cat test_data.json', 'echo "running test"']:
+        for cmd in ['git commit -m "fix build and test"', 'cat test_data.json', 'echo "running test; cargo build"']:
             payload = {
                 "conversationId": "gate-test-commit",
                 "toolCall": {
@@ -381,6 +425,25 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         self.assertIn("entry_19", res.stdout)
         self.assertNotIn("entry_25", res.stdout)
 
+    def test_lean_read_clamps_minified_single_line_token_bomb(self):
+        test_file = Path(self.test_dir) / "bundle.min.js"
+        # 1-line file with 10,000 characters
+        test_file.write_text("var x = 1;" * 1000 + "\n")
+
+        script = SCRIPTS_DIR / "lean_read.py"
+        res = subprocess.run(
+            [sys.executable, str(script), str(test_file)],
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("[...line truncated]", res.stdout)
+        # Verify output line does not exceed line budget + truncation notice
+        lines = res.stdout.splitlines()
+        content_lines = [l for l in lines if not l.startswith("[leanctx:")]
+        for l in content_lines:
+            self.assertLessEqual(len(l), 530)
+
     def test_ledger_tool_cli_commands(self):
         script = SCRIPTS_DIR / "ledger_tool.py"
         ws = self.test_dir
@@ -393,13 +456,14 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         res = subprocess.run([sys.executable, str(script), "-w", ws, "set-task", "--id", "T1", "--desc", "Init Store"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
 
-        # 3. anchor (verifies GOAL, CONSTRAINTS, ACTIVE)
+        # 3. anchor (verifies GOAL, CONSTRAINTS, ACTIVE, <= 240 chars)
         res = subprocess.run([sys.executable, str(script), "-w", ws, "anchor"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("[leanctx-anchor]", res.stdout)
         self.assertIn("GOAL: Build Cache", res.stdout)
         self.assertIn("CONSTRAINTS: No Redis; Mem < 100MB", res.stdout)
         self.assertIn("ACTIVE: T1 (Init Store)", res.stdout)
+        self.assertLessEqual(len(res.stdout.strip()), 240)
 
         # 4. add-file with symbols
         res = subprocess.run([sys.executable, str(script), "-w", ws, "add-file", "--file", "src/cache.py", "--symbols", "get(k: str) -> str; set(k: str, v: str)"], capture_output=True, text=True)

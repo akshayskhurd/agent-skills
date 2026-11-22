@@ -1,16 +1,34 @@
 #!/usr/bin/env python3
 """
 SessionStart Hook for leanctx.
-Registers master conversationId, initializes secure scratch directory (mode 0700),
+Registers master conversationId, initializes secure UID-scoped scratch directory (mode 0700),
 and ensures .gitignore contains .agents/memory/.
 """
-import sys
-import os
 import json
+import os
+import sys
+import tempfile
+import time
+
 
 def fail_open():
     print(json.dumps({"injectSteps": []}))
     sys.exit(0)
+
+
+def get_scratch_dir(conv_id: str) -> str:
+    base_temp = tempfile.gettempdir()
+    uid_suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
+    safe_conv = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
+    path = os.path.join(base_temp, f"leanctx{uid_suffix}", safe_conv)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if hasattr(os, "chmod"):
+        try:
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+    return path
+
 
 def main():
     try:
@@ -21,44 +39,30 @@ def main():
         workspace_paths = payload.get("workspacePaths", [])
         workspace_root = workspace_paths[0] if workspace_paths else os.getcwd()
 
-        # 1. Secure scratch directory with 0700 permissions and FIFO log rotation
-        scratch_dir = f"/tmp/leanctx/{safe_conv_id}"
-        os.makedirs(scratch_dir, mode=0o700, exist_ok=True)
-        try:
-            os.chmod(scratch_dir, 0o700)
-        except OSError:
-            pass
+        # 1. Secure scratch directory with 0700 permissions
+        scratch_dir = get_scratch_dir(safe_conv_id)
 
-        # Rolling FIFO cleanup: cap scratch directory to 10 files maximum
-        try:
-            log_entries = [
-                os.path.join(scratch_dir, f) for f in os.listdir(scratch_dir)
-                if os.path.isfile(os.path.join(scratch_dir, f))
-            ]
-            if len(log_entries) > 10:
-                log_entries.sort(key=os.path.getmtime)
-                for old_file in log_entries[:-10]:
-                    try:
-                        os.remove(old_file)
-                    except OSError:
-                        pass
-        except OSError:
-            pass
-
-        # 2. Register master session ID (refresh if missing or older than 2 hours)
+        # 2. Register master session ID (prevent subagent lockout)
         memory_dir = os.path.join(workspace_root, ".agents", "memory")
         os.makedirs(memory_dir, exist_ok=True)
         session_file = os.path.join(memory_dir, ".master_session")
-        is_stale = False
+
+        can_register = True
         if os.path.exists(session_file):
             try:
-                import time
-                if time.time() - os.path.getmtime(session_file) > 7200:
-                    is_stale = True
+                with open(session_file, "r", encoding="utf-8") as f:
+                    existing_master = f.read().strip()
+                # If caller is the existing master, refresh heartbeat
+                if existing_master == conv_id:
+                    os.utime(session_file, None)
+                    can_register = False
+                elif time.time() - os.path.getmtime(session_file) <= 7200:
+                    # Active session exists; do NOT let a new/subagent conversation overwrite master
+                    can_register = False
             except OSError:
-                is_stale = True
+                pass
 
-        if not os.path.exists(session_file) or is_stale:
+        if can_register:
             with open(session_file, "w", encoding="utf-8") as f:
                 f.write(conv_id)
 
@@ -78,6 +82,7 @@ def main():
         fail_open()
     except Exception:
         fail_open()
+
 
 if __name__ == "__main__":
     main()

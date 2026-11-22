@@ -2,31 +2,29 @@
 
 `leanctx` prevents context window bloat, eliminates goal drift, and caps token accumulation across long-running coding sessions in any agent harness (Google Antigravity, Claude Code, OpenCode, Pi, Codex).
 
-![leanctx Component Architecture](./assets/architecture.svg)
-*Figure 1: Complete multi-harness component architecture, physical ingress sandboxing, living state ledger, and micro-anchoring loop ([High-Res PNG](./assets/architecture.png)).*
+![leanctx Executive Architecture](./assets/architecture_l1.svg)
+*Figure 1: High-level (Level-1) conceptual architecture: 4-block optimization flow from raw tool ingress to bounded context and persistent living ledger ([High-Res PNG](./assets/architecture_l1.png)).*
 
 ---
 
 ## 1. Architecture & Component Overview
 
 ```mermaid
-flowchart TD
-    A["Agent Tool Invocation"] --> B{"Command / File Ingress"}
-    B -->|"Build / Test / Search"| C["lean_run.py Sandbox"]
-    B -->|"File Read"| D["lean_read.py Clamping"]
-    C -->|"Pass: Tail 25 lines"| E["Ingress Gating Layer"]
-    C -->|"Fail: Head 15 + Root Cause + Tail 15"| E
-    D -->|"<= 150 Lines / 24 KB / 500 Char Cap"| E
-    E --> F["Host Conversation Working Memory"]
-    E --> G["Disk Ledger (.agents/memory/LEDGER.json)"]
-    G --> H["Rank 1: Root Intent & Invariants"]
-    G --> I["Rank 2: Active DAG Milestone"]
-    G --> J["Rank 3: Symbols, Decisions & Dead Ends"]
-    G --> K["inject_anchor.py Micro-Anchor (<= 60 tokens)"]
-    K --> F
-    L["Harness Compaction / Resumption"] --> M["ledger_tool.py rehydrate"]
-    M --> F
+flowchart LR
+    A["Raw Tool Output (10k+ tok)"] -->|"Noise Gate"| B["lean_run / lean_read Sandbox"]
+    B -->|"-94.4% Clamped Signal"| C["Active Context Window (&lt;= 8k tok)"]
+    C -->|"State Stream"| D["Living Ledger (LEDGER.json)"]
+    D -.->|"Micro-Anchor Loop (&lt;= 60 tok)"| C
+    D ==>|"Post-Compaction rehydrate"| C
 ```
+
+<details>
+<summary><b>🔍 Expand Detailed Level-2 Component Architecture Diagram</b></summary>
+
+![leanctx Detailed Component Architecture](./assets/architecture.svg)
+*Figure 2: Detailed (Level-2) multi-harness component architecture, script sandboxes, and internal state tiers ([High-Res PNG](./assets/architecture.png)).*
+
+</details>
 
 ### Core Design Principles
 1. **Physical Tool Ingress Sandboxing (`lean_run.py`, `lean_read.py`)**:

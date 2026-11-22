@@ -46,7 +46,8 @@ Define `<SCRIPTS>` as the resolved directory path. On Windows environments witho
 
 ## 3. The 6-Tier Retention & Ingress Hierarchy
 
-![leanctx Component Architecture](./assets/architecture.svg)
+![leanctx Executive Architecture](./assets/architecture_l1.svg)
+*Figure 1: High-level (Level-1) conceptual optimization flow from raw tool output to bounded context and persistent living ledger.*
 
 ```
 ┌────────────────────────────────────────────────────────┐

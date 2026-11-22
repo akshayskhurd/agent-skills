@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 PreToolUse Hook for leanctx.
-Selectively gates noisy CLI commands, clamps large unbounded read_file calls using streaming bounds,
+Selectively gates noisy CLI commands by delegating to lean_run.py,
+clamps large unbounded read_file calls using streaming threshold detection,
 and bypasses daemon processes cross-platform.
 """
 import json
@@ -21,20 +22,6 @@ HIGH_VOLUME_PREFIX = re.compile(
 )
 
 
-def get_scratch_dir(conv_id: str) -> str:
-    base_temp = tempfile.gettempdir()
-    uid_suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else ""
-    safe_conv = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
-    path = os.path.join(base_temp, f"leanctx{uid_suffix}", safe_conv)
-    os.makedirs(path, mode=0o700, exist_ok=True)
-    if hasattr(os, "chmod"):
-        try:
-            os.chmod(path, 0o700)
-        except OSError:
-            pass
-    return path
-
-
 def emit_allow(overwrite=None):
     res = {"decision": "allow"}
     if overwrite:
@@ -45,7 +32,6 @@ def emit_allow(overwrite=None):
 
 def split_commands_safe(cmd_str: str) -> list:
     """Split chained shell pipelines safely respecting quotes."""
-    # Split on ; && || only outside single/double quotes
     parts = []
     current = []
     in_single = False
@@ -94,28 +80,21 @@ def handle_run_command(tool_call, conv_id):
     if not is_high_volume_command(cmd):
         emit_allow()
 
-    scratch_dir = get_scratch_dir(conv_id)
-    log_file = os.path.join(scratch_dir, "last_exec.log")
-    quoted_log = shlex.quote(log_file)
+    # Route through lean_run.py for 100% parity with CLI mode:
+    # Cross-platform execution, unique per-PID logs, rolling FIFO, and character/byte capping
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    lean_run_path = os.path.join(script_dir, "lean_run.py")
+    py_exec = sys.executable
 
-    # Diagnostic wrapper: on failure, extracts root-cause error lines from the log
-    # plus initial compiler context and final exit summary.
-    wrapped_cmd = (
-        f"({cmd}) > {quoted_log} 2>&1; EXIT_CODE=$?; "
-        f"if [ \"${{EXIT_CODE:-1}}\" -eq 0 ]; then "
-        f"  tail -n 25 {quoted_log}; "
-        f"else "
-        f"  echo '[leanctx: ERROR DETECTED (Exit code: '$EXIT_CODE')]'; "
-        f"  echo '--- INITIAL OUTPUT (Head 15) ---'; "
-        f"  head -n 15 {quoted_log}; "
-        f"  echo '--- ROOT-CAUSE ERROR CONTEXT ---'; "
-        f"  grep -n -C 3 -i -E '(error|fail|panic|exception|traceback)' {quoted_log} | head -n 35; "
-        f"  echo '--- FINAL OUTPUT (Tail 15) ---'; "
-        f"  tail -n 15 {quoted_log}; "
-        f"fi; "
-        f"echo '[leanctx: Full log available at {quoted_log} | Drill down: grep -n -i \"error\" {quoted_log}]'; "
-        f"exit $EXIT_CODE"
-    )
+    # Environment variable CONVERSATION_ID propagation
+    safe_conv = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
+    if os.name == "nt":
+        import subprocess as _sp
+        runner_cmd = _sp.list2cmdline([py_exec, lean_run_path, cmd])
+        wrapped_cmd = f"set CONVERSATION_ID={safe_conv}&& {runner_cmd}"
+    else:
+        wrapped_cmd = f"CONVERSATION_ID={shlex.quote(safe_conv)} {shlex.quote(py_exec)} {shlex.quote(lean_run_path)} {shlex.quote(cmd)}"
+
     emit_allow(overwrite={"CommandLine": wrapped_cmd})
 
 

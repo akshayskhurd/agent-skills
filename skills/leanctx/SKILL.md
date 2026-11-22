@@ -116,10 +116,10 @@ flowchart TD
    - On success: Emits tail 25 lines if total lines $> 30$.
    - On failure: Emits Head 15 lines, root-cause error lines from the middle of the log, and Tail 15 lines if total lines $> 50$ (maximum 65 lines).
 2. **Drilling Down into Full Logs on Command Failure**:
-   - If the summary misses root-cause stack traces, inspect the full log saved in `/tmp/leanctx/<id>/last_exec.log`:
+   - If the summary misses root-cause stack traces, inspect the full log saved in `<SCRATCH>/last_exec.log` (located at `<tempdir>/leanctx-<uid>/<id>/last_exec.log`):
      ```bash
-     grep -n -C 5 -i -E "error|fail|panic|exception" /tmp/leanctx/<id>/last_exec.log
-     python3 "<SCRIPTS>/lean_read.py" /tmp/leanctx/<id>/last_exec.log --start <line> --end <line+50>
+     grep -n -C 5 -i -E "error|fail|panic|exception" "<SCRATCH>/last_exec.log"
+     python3 "<SCRIPTS>/lean_read.py" "<SCRATCH>/last_exec.log" --start <line> --end <line+50>
      ```
 3. **File Reading Line Clamping**:
    - Never ingest entire multi-hundred line files without line bounds.

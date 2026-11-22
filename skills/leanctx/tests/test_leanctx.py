@@ -244,6 +244,56 @@ class TestLeanctxLedgerAndSubagentIsolation(unittest.TestCase):
         self.assertIn("CONSTRAINTS: No Redis; Memory < 100MB", text)
         self.assertIn("ACTIVE: T1-INIT", text)
 
+    def test_inject_anchor_subagent_isolation(self):
+        # Setup master session and master ledger
+        mem_dir = Path(self.test_dir) / ".agents" / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        (mem_dir / ".master_session").write_text("master-001\n")
+        (mem_dir / "LEDGER.json").write_text(json.dumps({
+            "rank1_root_intent": {"goal": "Master Objective", "constraints": ["Global Constraint"]},
+            "rank2_active_state": {"current_dag_node": "M1"}
+        }))
+
+        # Setup worker subagent ledger
+        (mem_dir / "LEDGER_worker_99.json").write_text(json.dumps({
+            "rank1_root_intent": {"goal": "Subagent Sharded Task", "constraints": ["Worker Constraint"]},
+            "rank2_active_state": {"current_dag_node": "W1"}
+        }))
+
+        # Subagent invocation
+        subagent_payload = {
+            "cwd": self.test_dir,
+            "conversationId": "worker_99"
+        }
+        res = subprocess.run(
+            [sys.executable, str(self.anchor_script)],
+            input=json.dumps(subagent_payload),
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+        out = json.loads(res.stdout)
+        text = out["injectSteps"][0]["systemMessage"]["systemMessage"]
+        self.assertIn("Subagent Sharded Task", text)
+        self.assertIn("Worker Constraint", text)
+        self.assertIn("W1", text)
+        self.assertNotIn("Master Objective", text)
+
+        # Uninitialized subagent: verify it receives empty injectSteps and does NOT leak master's anchor
+        uninit_payload = {
+            "cwd": self.test_dir,
+            "conversationId": "uninit_worker_100"
+        }
+        res = subprocess.run(
+            [sys.executable, str(self.anchor_script)],
+            input=json.dumps(uninit_payload),
+            text=True,
+            capture_output=True
+        )
+        self.assertEqual(res.returncode, 0)
+        out = json.loads(res.stdout)
+        self.assertEqual(out.get("injectSteps", []), [])
+
 
 class TestLeanctxGateTool(unittest.TestCase):
     def setUp(self):
@@ -269,9 +319,8 @@ class TestLeanctxGateTool(unittest.TestCase):
             self.assertEqual(out.get("decision"), "allow")
             self.assertIn("overwrite", out)
             overwritten_cmd = out["overwrite"]["CommandLine"]
+            self.assertIn("lean_run.py", overwritten_cmd)
             self.assertIn(cmd, overwritten_cmd)
-            self.assertIn("INITIAL OUTPUT (Head 15)", overwritten_cmd)
-            self.assertIn("FINAL OUTPUT (Tail 15)", overwritten_cmd)
 
     def test_gate_tool_ignores_git_commit_and_cat(self):
         # Verify overly broad regex bug is fixed: commit messages with 'build' or 'test' are not wrapped

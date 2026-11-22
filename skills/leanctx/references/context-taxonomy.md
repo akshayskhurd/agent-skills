@@ -28,7 +28,7 @@ An LLM cannot evict or delete messages from its own conversational context once 
 | **Rank 3** | **SEMANTIC LEDGER** | **Contracts, Signatures & Dead Ends** | Modified file paths with public exported signatures, verified technical decisions, and rejected dead-end paths. | **$\le 1,500$ tokens on disk**. Persisted atomically in `LEDGER.json`. Must preserve exact public signatures (stripping implementation bodies) and dead ends to eliminate re-read and retry loops. |
 | **Rank 4** | **TRANSIENT BUFFER** | **Conversational Working Memory** | Conversational back-and-forth, immediate prior user inputs, and immediate tool results. | **$\le 4,000$ tokens in context**. Harness-managed rolling turns. Naturally compacted when host harness triggers context compaction. |
 | **Rank 5** | **EPHEMERAL READS** | **Exploratory & Static File Reads** | Code extracts, AST outlines, search results (`grep`, `find`), directory listings. | **Clamped $\le 150$ lines/read**. Unbounded file reads are strictly prohibited. Relevant public signatures are distilled to Rank 3; raw lines never re-enter context. |
-| **Rank 6** | **DISPOSABLE NOISE** | **Execution & Build Noise** | Verbose stdout/stderr of builds, test suites, linter runs, package installations (`npm`, `cargo`, `pip`). | **Clamped $\le 50$ lines in context**. Raw stream redirected to `/tmp/leanctx/<id>/last_exec.log`. Success emits tail 25 lines. Failure emits diagnostic sandwich (Head 15 + Root-cause error lines + Tail 15 $\le 65$ lines). |
+| **Rank 6** | **DISPOSABLE NOISE** | **Execution & Build Noise** | Verbose stdout/stderr of builds, test suites, linter runs, package installations (`npm`, `cargo`, `pip`). | **Clamped $\le 50$ lines in context**. Raw stream redirected to `<SCRATCH>/last_exec.log`. Success emits tail 25 lines. Failure emits diagnostic sandwich (Head 15 + Root-cause error lines + Tail 15 $\le 65$ lines). |
 
 ---
 
@@ -53,7 +53,7 @@ An LLM cannot evict or delete messages from its own conversational context once 
 3. **Milestone Completion & Demotion**:
    - When a Rank 2 active task completes, the agent MUST record verified decisions and touched file signatures into Rank 3, then update Rank 2 to the subsequent DAG milestone.
 4. **Disposal**:
-   - Raw Rank 5 and Rank 6 disk logs in `/tmp/leanctx/<id>/` expire automatically via FIFO rotation (maximum 10 files) and MUST NEVER be promoted to persistent memory.
+   - Raw Rank 5 and Rank 6 disk logs in `<SCRATCH>/` expire automatically via FIFO rotation (maximum 10 files) and MUST NEVER be promoted to persistent memory.
 
 ---
 
@@ -66,7 +66,7 @@ An LLM cannot evict or delete messages from its own conversational context once 
 - Failing commands ($\text{exit code} \ne 0$):
   - Outputs $\le 50$ lines: Emitted in full.
   - Outputs $> 50$ lines: Clamped to Head 15 lines + Root-cause error context (up to 35 lines) + Tail 15 lines. Total output MUST NOT exceed 65 lines.
-  - Full output MUST ALWAYS be redirected to `/tmp/leanctx/<id>/last_exec.log`.
+  - Full output MUST ALWAYS be redirected to `<SCRATCH>/last_exec.log`.
 
 ### File Reading Clamping (Rank 5)
 - All file reads MUST be bounded to $\le 150$ lines.

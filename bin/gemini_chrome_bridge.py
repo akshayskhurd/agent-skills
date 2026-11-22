@@ -6,6 +6,7 @@ Uses native macOS AppleScript to communicate directly with the active Chrome ses
 
 import argparse
 import base64
+import html
 import json
 import subprocess
 import sys
@@ -51,21 +52,42 @@ def send_prompt_and_get_response(prompt_text: str, timeout_sec: int = 180) -> st
     initial_res = json.loads(execute_chrome_js(init_check_js))
     initial_count = initial_res.get("count", 0)
 
-    # 3. Inject text (activates window to allow execCommand)
+    # 3. Inject text via TrustedHTML paragraphs (preserves full markdown without execCommand truncation)
+    paras = "".join(f"<p>{html.escape(l) if l.strip() else '<br>'}</p>" for l in prompt_text.split("\n"))
     inject_js = f"""
     const editor = document.querySelector('rich-textarea div[contenteditable="true"], div[contenteditable="true"]');
     if (!editor) return JSON.stringify({{ ok: false, error: "Input editor not found" }});
     
+    let policy;
+    try {{
+        policy = window.trustedTypes.createPolicy('geminiBridgePolicy', {{ createHTML: s => s }});
+    }} catch(e) {{
+        policy = {{ createHTML: s => s }};
+    }}
+
     editor.focus();
-    document.execCommand('selectAll', false, null);
-    document.execCommand('delete', false, null);
-    document.execCommand('insertText', false, {json.dumps(prompt_text)});
+    editor.innerHTML = policy.createHTML({json.dumps(paras)});
+    editor.dispatchEvent(new Event('input', {{ bubbles: true }}));
+    editor.dispatchEvent(new Event('change', {{ bubbles: true }}));
 
     return JSON.stringify({{ ok: true }});
     """
     res = json.loads(execute_chrome_js(inject_js, activate=True))
     if not res.get("ok"):
         raise RuntimeError(f"Failed to inject text: {res.get('error')}")
+
+    time.sleep(0.5)
+
+    # Verify injection succeeded and was not truncated
+    check_inject_js = """
+    const editor = document.querySelector('rich-textarea div[contenteditable="true"], div[contenteditable="true"]');
+    return JSON.stringify({ len: editor ? editor.innerText.length : 0 });
+    """
+    injected_info = json.loads(execute_chrome_js(check_inject_js))
+    injected_len = injected_info.get("len", 0)
+    expected_min = min(len(prompt_text) * 4 // 5, 2000)
+    if len(prompt_text) > 100 and injected_len < expected_min:
+        raise RuntimeError(f"Text injection truncated: expected ~{len(prompt_text)} chars, but editor only has {injected_len} chars.")
 
     # 4. Wait for send button to become active and click it
     click_send_js = """

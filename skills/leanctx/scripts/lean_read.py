@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Universal file reader for leanctx across any harness (Claude Code, OpenCode, Pi, Antigravity).
-Safely reads files with line-budget clamping, streaming islice, per-line character capping,
-and total byte limits to prevent token-bomb context explosions.
+Safely reads files with line-budget clamping, streaming chunking, per-line character capping,
+and total byte limits to prevent memory and token-bomb context explosions.
 """
 import argparse
-import itertools
 import os
 import sys
 
@@ -38,35 +37,54 @@ def main():
 
     try:
         with open(args.path, "r", encoding="utf-8", errors="replace") as f:
-            # Stream directly using islice to prevent memory explosion on multi-GB files
-            stream = itertools.islice(f, start_idx, start_idx + max_to_fetch + 1)
-            for line in stream:
-                total_scanned += 1
-                if total_scanned > max_to_fetch:
+            # Skip lines before start_idx without loading entire lines into memory
+            for _ in range(start_idx):
+                f.readline()
+
+            # Stream requested lines bounded by chunk size to avoid memory DoS on single multi-MB lines
+            while total_scanned < max_to_fetch:
+                raw_chunk = f.readline(MAX_CHARS_PER_LINE + 1024)
+                if not raw_chunk:
                     break
-                # Per-line character cap to block minified single-line token bombs
-                if len(line) > MAX_CHARS_PER_LINE:
-                    line = line[:MAX_CHARS_PER_LINE] + " [...line truncated]\n"
+                total_scanned += 1
+                had_newline = raw_chunk.endswith("\n")
+                if not had_newline:
+                    # Drain remainder of this long line until true newline to prevent counting continuation as line 2
+                    while True:
+                        drain = f.readline(4096)
+                        if not drain or drain.endswith("\n"):
+                            break
+
+                if len(raw_chunk) > MAX_CHARS_PER_LINE:
+                    line = raw_chunk[:MAX_CHARS_PER_LINE] + " [...line truncated]\n"
+                elif not had_newline:
+                    line = raw_chunk + "\n"
+                else:
+                    line = raw_chunk
+
                 line_bytes = len(line.encode("utf-8"))
                 if total_bytes + line_bytes > MAX_TOTAL_BYTES:
                     hit_byte_limit = True
                     break
                 selected_lines.append(line)
                 total_bytes += line_bytes
+
+            # Check if additional lines exist beyond max_to_fetch
+            has_more = bool(f.readline())
     except Exception as exc:
         print(f"Error reading file '{args.path}': {str(exc)}", file=sys.stderr)
         sys.exit(1)
 
     actual_count = len(selected_lines)
     header = f"[leanctx: Reading '{args.path}' lines {start_idx + 1} to {start_idx + actual_count}]\n"
-    if total_scanned > max_to_fetch:
+    if has_more and actual_count >= max_to_fetch:
         header = f"[leanctx: File '{args.path}' clamped to {max_to_fetch} lines]\n"
     elif hit_byte_limit:
         header = f"[leanctx: File '{args.path}' clamped to {MAX_TOTAL_BYTES // 1024} KB byte budget]\n"
 
     sys.stdout.write(header)
     sys.stdout.write("".join(selected_lines))
-    if total_scanned > max_to_fetch or hit_byte_limit:
+    if has_more or hit_byte_limit:
         sys.stdout.write(f"\n[leanctx: Notice: Additional lines truncated to preserve context. Use targeted --start and --end]\n")
 
 

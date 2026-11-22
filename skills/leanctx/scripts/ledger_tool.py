@@ -31,8 +31,10 @@ def get_lock_path(ledger_path: str) -> str:
 def file_lock(lock_path: str):
     """Cross-platform advisory file lock for atomic read-modify-write transactions."""
     os.makedirs(os.path.dirname(os.path.abspath(lock_path)), exist_ok=True)
-    f = open(lock_path, "w", encoding="utf-8")
+    # Open with "a+" to prevent Windows PermissionError on truncation of locked files
+    f = open(lock_path, "a+", encoding="utf-8")
     try:
+        f.seek(0)
         if os.name == "nt":
             import msvcrt
             msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
@@ -42,9 +44,9 @@ def file_lock(lock_path: str):
         yield
     finally:
         try:
+            f.seek(0)
             if os.name == "nt":
                 import msvcrt
-                f.seek(0)
                 msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl

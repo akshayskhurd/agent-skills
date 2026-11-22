@@ -21,8 +21,10 @@ def fail_open():
 def file_lock(lock_path: str):
     """Advisory file locking to prevent lost updates across concurrent tools."""
     os.makedirs(os.path.dirname(os.path.abspath(lock_path)), exist_ok=True)
-    f = open(lock_path, "w", encoding="utf-8")
+    # Open with "a+" to prevent Windows PermissionError on truncation of locked files
+    f = open(lock_path, "a+", encoding="utf-8")
     try:
+        f.seek(0)
         if os.name == "nt":
             import msvcrt
             msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
@@ -32,6 +34,7 @@ def file_lock(lock_path: str):
         yield
     finally:
         try:
+            f.seek(0)
             if os.name == "nt":
                 import msvcrt
                 f.seek(0)

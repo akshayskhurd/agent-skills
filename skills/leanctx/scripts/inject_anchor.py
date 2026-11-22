@@ -2,7 +2,8 @@
 """
 PreInvocation Hook for leanctx.
 Injects a single-line micro-anchor (<= 60 tokens, <= 240 chars) in exact protojson schema.
-Supports session-isolated subagent anchors and prevents token inflation across turns.
+Aligns on conversationId, enforces alphanumeric sanitization, isolates subagent anchors,
+and prevents quadratic token inflation across turns.
 """
 import json
 import os
@@ -23,11 +24,28 @@ def main():
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else {}
         cwd = payload.get("cwd", os.getcwd())
-        session_id = payload.get("sessionId") or payload.get("session")
+        conv_id = payload.get("conversationId") or payload.get("sessionId") or payload.get("session") or "default"
+        safe_conv = "".join(c for c in conv_id if c.isalnum() or c in ("-", "_")) or "default"
 
-        ledger_file = f"LEDGER_{session_id}.json" if session_id else "LEDGER.json"
-        ledger_path = os.path.join(cwd, ".agents", "memory", ledger_file)
+        memory_dir = os.path.join(cwd, ".agents", "memory")
+        session_file = os.path.join(memory_dir, ".master_session")
 
+        ledger_file = "LEDGER.json"
+        if os.path.exists(session_file):
+            try:
+                with open(session_file, "r", encoding="utf-8") as f:
+                    master_id = f.read().strip()
+                if master_id and master_id != conv_id:
+                    # Subagent caller: read session-isolated ledger or emit empty if not initialized
+                    sub_name = f"LEDGER_{safe_conv}.json"
+                    if os.path.exists(os.path.join(memory_dir, sub_name)):
+                        ledger_file = sub_name
+                    else:
+                        emit()
+            except OSError:
+                pass
+
+        ledger_path = os.path.join(memory_dir, ledger_file)
         if not os.path.exists(ledger_path):
             emit()
 

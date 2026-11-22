@@ -46,6 +46,8 @@ Define `<SCRIPTS>` as the resolved directory path. On Windows environments witho
 
 ## 3. The 6-Tier Retention & Ingress Hierarchy
 
+![leanctx Component Architecture](./assets/architecture.svg)
+
 ```
 ┌────────────────────────────────────────────────────────┐
 │ Rank 1: Root Intent & Invariant Rules   (DISK LEDGER)  │

@@ -2,9 +2,12 @@
 
 `leanctx` prevents context window bloat, eliminates goal drift, and caps token accumulation across long-running coding sessions in any agent harness (Google Antigravity, Claude Code, OpenCode, Pi, Codex).
 
+![leanctx Component Architecture](./assets/architecture.svg)
+*Figure 1: Complete multi-harness component architecture, physical ingress sandboxing, living state ledger, and micro-anchoring loop ([High-Res PNG](./assets/architecture.png)).*
+
 ---
 
-## 1. Architectural Architecture & Mechanics
+## 1. Architecture & Component Overview
 
 ```mermaid
 flowchart TD

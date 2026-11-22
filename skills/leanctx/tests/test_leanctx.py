@@ -118,8 +118,28 @@ class TestLeanctxGateTool(unittest.TestCase):
         self.assertIn("overwrite", out)
         overwritten_cmd = out["overwrite"]["CommandLine"]
         self.assertIn("pytest tests/ -v", overwritten_cmd)
-        self.assertIn("INITIAL OUTPUT (Head 25)", overwritten_cmd)
-        self.assertIn("FINAL OUTPUT (Tail 25)", overwritten_cmd)
+        self.assertIn("INITIAL OUTPUT (Head 15)", overwritten_cmd)
+        self.assertIn("FINAL OUTPUT (Tail 15)", overwritten_cmd)
+
+    def test_gate_tool_ignores_git_commit_and_cat(self):
+        # Verify overly broad regex bug is fixed: commit messages with 'build' or 'test' are not wrapped
+        for cmd in ['git commit -m "fix build and test"', 'cat test_data.json', 'echo "running test"']:
+            payload = {
+                "conversationId": "gate-test-commit",
+                "toolCall": {
+                    "name": "run_command",
+                    "args": {"CommandLine": cmd}
+                }
+            }
+            res = subprocess.run(
+                [sys.executable, str(self.script_path)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True
+            )
+            out = json.loads(res.stdout)
+            self.assertEqual(out.get("decision"), "allow")
+            self.assertNotIn("overwrite", out)
 
     def test_gate_tool_bypasses_low_volume_commands(self):
         payload = {
@@ -316,8 +336,8 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         )
         self.assertEqual(res.returncode, 42)
         self.assertIn("ERROR DETECTED (Exit code: 42", res.stdout)
-        self.assertIn("--- INITIAL OUTPUT (Head 25) ---", res.stdout)
-        self.assertIn("--- FINAL OUTPUT (Tail 25) ---", res.stdout)
+        self.assertIn("--- INITIAL OUTPUT (Head 15) ---", res.stdout)
+        self.assertIn("--- FINAL OUTPUT (Tail 15) ---", res.stdout)
 
     def test_lean_read_clamps_lines(self):
         test_file = Path(self.test_dir) / "sample.txt"
@@ -353,6 +373,24 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         self.assertIn("[leanctx-anchor]", res.stdout)
         self.assertIn("Build Cache", res.stdout)
         self.assertIn("T1", res.stdout)
+
+        # 4. rehydrate
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "rehydrate"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("[leanctx-rehydrate]", res.stdout)
+        self.assertIn("ROOT INTENT: Build Cache", res.stdout)
+        self.assertIn("ACTIVE TASK: [T1] Init Store", res.stdout)
+
+        # 5. status
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "status"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("Status: Active", res.stdout)
+
+        # 6. session isolation
+        res = subprocess.run([sys.executable, str(script), "-w", ws, "-s", "worker_99", "init", "--goal", "Isolated Worker Task"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        worker_file = Path(ws) / ".agents" / "memory" / "LEDGER_worker_99.json"
+        self.assertTrue(worker_file.exists())
 
 
 class TestLeanctxTelemetry(unittest.TestCase):

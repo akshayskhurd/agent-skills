@@ -21,11 +21,27 @@ def main():
         workspace_paths = payload.get("workspacePaths", [])
         workspace_root = workspace_paths[0] if workspace_paths else os.getcwd()
 
-        # 1. Secure scratch directory with 0700 permissions
+        # 1. Secure scratch directory with 0700 permissions and FIFO log rotation
         scratch_dir = f"/tmp/leanctx/{safe_conv_id}"
         os.makedirs(scratch_dir, mode=0o700, exist_ok=True)
         try:
             os.chmod(scratch_dir, 0o700)
+        except OSError:
+            pass
+
+        # Rolling FIFO cleanup: cap scratch directory to 10 files maximum
+        try:
+            log_entries = [
+                os.path.join(scratch_dir, f) for f in os.listdir(scratch_dir)
+                if os.path.isfile(os.path.join(scratch_dir, f))
+            ]
+            if len(log_entries) > 10:
+                log_entries.sort(key=os.path.getmtime)
+                for old_file in log_entries[:-10]:
+                    try:
+                        os.remove(old_file)
+                    except OSError:
+                        pass
         except OSError:
             pass
 

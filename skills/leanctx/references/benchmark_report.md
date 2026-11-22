@@ -35,8 +35,8 @@
 
 | Metric | Raw Subprocess Execution | `leanctx` Sandboxed Execution | Physical Delta |
 | :--- | :--- | :--- | :--- |
-| **Ingested Lines (Command + File Read)** | **1403 lines** | **210 lines** | **-85.0% lines** |
-| **Physical Output Tokens Generated** | **9,263 tokens** | **1,605 tokens** | **-82.67% tokens** |
+| **Ingested Lines (Command + File Read)** | **1403 lines** | **203 lines** | **-85.5% lines** |
+| **Physical Output Tokens Generated** | **9,263 tokens** | **1,503 tokens** | **-83.77% tokens** |
 
 ---
 

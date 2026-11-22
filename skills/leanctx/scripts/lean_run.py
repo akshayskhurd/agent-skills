@@ -58,13 +58,26 @@ def main():
         if total_lines <= 50:
             sys.stdout.write("".join(lines))
         else:
-            sys.stdout.write("--- INITIAL OUTPUT (Head 25) ---\n")
-            sys.stdout.write("".join(lines[:25]))
-            sys.stdout.write(f"\n... [{total_lines - 50} lines truncated by leanctx] ...\n\n")
-            sys.stdout.write("--- FINAL OUTPUT (Tail 25) ---\n")
-            sys.stdout.write("".join(lines[-25:]))
+            # Smart root-cause error discovery in logs
+            import re
+            err_re = re.compile(r"\b(error|fail|failed|failure|exception|traceback|panic|panicked|fatal|syntaxerror|typeerror)\b", re.IGNORECASE)
+            err_indices = [idx for idx, line in enumerate(lines) if err_re.search(line)]
 
-    sys.stdout.write(f"[leanctx: Full raw log stored at {log_file}]\n")
+            sys.stdout.write("--- INITIAL OUTPUT (Head 15) ---\n")
+            sys.stdout.write("".join(lines[:15]))
+
+            if err_indices:
+                first_err = err_indices[0]
+                start_err = max(15, first_err - 3)
+                end_err = min(total_lines - 15, first_err + 25)
+                if start_err < end_err:
+                    sys.stdout.write(f"\n--- ROOT-CAUSE ERROR CONTEXT (Lines {start_err + 1} to {end_err}) ---\n")
+                    sys.stdout.write("".join(lines[start_err:end_err]))
+
+            sys.stdout.write(f"\n--- FINAL OUTPUT (Tail 15) ---\n")
+            sys.stdout.write("".join(lines[-15:]))
+
+    sys.stdout.write(f"\n[leanctx: Full log stored at {log_file} | Drill down: grep -n -i 'error' {log_file}]\n")
     sys.exit(exit_code)
 
 

@@ -11,8 +11,11 @@ import tempfile
 from typing import Dict, Any
 
 
-def get_ledger_path(workspace_root: str = None) -> str:
+def get_ledger_path(workspace_root: str = None, session_id: str = None) -> str:
     root = workspace_root if workspace_root else os.getcwd()
+    if session_id:
+        safe_id = "".join(c for c in session_id if c.isalnum() or c in ("-", "_")) or "default"
+        return os.path.join(root, ".agents", "memory", f"LEDGER_{safe_id}.json")
     return os.path.join(root, ".agents", "memory", "LEDGER.json")
 
 
@@ -48,7 +51,7 @@ def save_ledger_atomic(ledger_path: str, data: Dict[str, Any]) -> None:
 
 
 def cmd_init(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     data["rank1_root_intent"]["goal"] = args.goal
     if args.constraints:
@@ -58,7 +61,7 @@ def cmd_init(args):
 
 
 def cmd_set_task(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     data["rank2_active_state"]["current_dag_node"] = args.id
     if args.desc:
@@ -68,7 +71,7 @@ def cmd_set_task(args):
 
 
 def cmd_add_decision(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     decisions = data.setdefault("rank3_semantic_ledger", {}).setdefault("decisions", [])
     decisions.append(args.text)
@@ -77,7 +80,7 @@ def cmd_add_decision(args):
 
 
 def cmd_add_file(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     files = data.setdefault("rank3_semantic_ledger", {}).setdefault("modified_files", {})
     files[args.file] = args.status
@@ -86,7 +89,7 @@ def cmd_add_file(args):
 
 
 def cmd_show(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     if not os.path.exists(path):
         print(f"No ledger found at: {path}")
         return
@@ -94,8 +97,47 @@ def cmd_show(args):
         print(f.read())
 
 
+def cmd_rehydrate(args):
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
+    if not os.path.exists(path):
+        print(f"[leanctx-rehydrate] No active state ledger found at: {path}")
+        return
+    data = load_ledger(path)
+    goal = data.get("rank1_root_intent", {}).get("goal", "Execute plan")
+    constraints = data.get("rank1_root_intent", {}).get("constraints", [])
+    active = data.get("rank2_active_state", {}).get("current_dag_node", "INITIALIZE")
+    desc = data.get("rank2_active_state", {}).get("description", "")
+    decisions = data.get("rank3_semantic_ledger", {}).get("decisions", [])
+    files = data.get("rank3_semantic_ledger", {}).get("modified_files", {})
+
+    print("=" * 60)
+    print("🔄 [leanctx-rehydrate] SESSION CONTEXT RESTORED FROM LEDGER")
+    print(f"• ROOT INTENT: {goal}")
+    if constraints:
+        print(f"• NON-NEGOTIABLE CONSTRAINTS: {'; '.join(constraints)}")
+    print(f"• ACTIVE TASK: [{active}] {desc}")
+    if decisions:
+        print(f"• VERIFIED DECISIONS ({len(decisions)}):")
+        for d in decisions[-5:]:
+            print(f"  - {d}")
+    if files:
+        print(f"• TOUCHED FILES ({len(files)}): {', '.join(sorted(list(files.keys()))[:8])}")
+    print("=" * 60)
+
+
+def cmd_status(args):
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
+    if not os.path.exists(path):
+        print(f"Status: Inactive (no ledger at {path})")
+        return
+    data = load_ledger(path)
+    files_count = len(data.get("rank3_semantic_ledger", {}).get("modified_files", {}))
+    decisions_count = len(data.get("rank3_semantic_ledger", {}).get("decisions", []))
+    print(f"Status: Active | Files Tracked: {files_count} | Decisions: {decisions_count} | Path: {path}")
+
+
 def cmd_anchor(args):
-    path = get_ledger_path(args.workspace)
+    path = get_ledger_path(args.workspace, getattr(args, "session", None))
     data = load_ledger(path)
     goal = data.get("rank1_root_intent", {}).get("goal", "Execute plan")
     active = data.get("rank2_active_state", {}).get("current_dag_node", "INITIALIZE")
@@ -107,6 +149,7 @@ def cmd_anchor(args):
 def main():
     parser = argparse.ArgumentParser(description="Universal leanctx Living State Ledger CLI")
     parser.add_argument("--workspace", "-w", default=None, help="Workspace root directory (defaults to cwd)")
+    parser.add_argument("--session", "-s", default=None, help="Optional session ID for parallel/subagent state isolation")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_p = subparsers.add_parser("init", help="Initialize or update root intent")
@@ -125,7 +168,7 @@ def main():
 
     file_p = subparsers.add_parser("add-file", help="Record modified file in ledger")
     file_p.add_argument("--file", "-f", required=True, help="File path relative to workspace")
-    file_p.add_argument("--status", "-s", default="modified", help="Status description")
+    file_p.add_argument("--status", default="modified", help="Status description")
     file_p.set_defaults(func=cmd_add_file)
 
     show_p = subparsers.add_parser("show", help="Display current ledger contents")
@@ -133,6 +176,12 @@ def main():
 
     anc_p = subparsers.add_parser("anchor", help="Generate single-line micro-anchor text")
     anc_p.set_defaults(func=cmd_anchor)
+
+    rehyd_p = subparsers.add_parser("rehydrate", help="Restore full context after compaction or resumption")
+    rehyd_p.set_defaults(func=cmd_rehydrate)
+
+    stat_p = subparsers.add_parser("status", help="Display summary status of active ledger")
+    stat_p.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
     args.func(args)

@@ -1,133 +1,147 @@
 ---
 name: leanctx
 description: >-
-  Universal zero-drift context hygiene and token optimization engine.
-  Enforces a 6-tier retention hierarchy, clamps noisy tool outputs, isolates
-  exploratory blast radius via subagents, and maintains an atomic state ledger across any agent harness.
+  Context hygiene and token optimization for long-running coding sessions.
+  Enforces tool output sandboxing, living state ledgers, compaction rehydration,
+  and subagent context isolation across Claude Code, OpenCode, Pi, Codex, and Antigravity.
 metadata:
   icon: memory
 ---
 
 # leanctx: Universal Context Optimization & Anti-Drift Engine
 
-`leanctx` prevents context window bloat, eliminates goal drift, and reduces quadratic token accumulation across long-running sessions in any coding agent harness (Google Antigravity, Claude Code, OpenCode, Pi, Codex).
+`leanctx` prevents context window bloat, eliminates goal drift, and caps token accumulation across long-running coding sessions in any agent harness (Google Antigravity, Claude Code, OpenCode, Pi, Codex).
 
 ---
 
-## 1. Trigger Conditions
+## 1. Trigger Conditions & Guardrails
 
+### When to Activate
 The agent MUST activate `leanctx` when:
-1. The user demands long-running session optimization, context trimming, or token cost minimization.
-2. A task involves running verbose builds, test suites, multi-file codebase explorations, or multi-phase refactoring.
-3. A session exceeds 10 turns and risks attention degradation or goal drift.
+1. The user explicitly requests context optimization, cost reduction, or session memory management.
+2. Embarking on a multi-phase, large-scale implementation (e.g. major refactoring, cross-package migration, complex multi-file debugging).
+3. Executing high-volume tool workflows (extensive test suites, package compilation, recursive codebase searches).
+
+### Negative Scope: When NOT to Use
+The agent MUST NOT activate `leanctx` for:
+- Single-turn queries, simple 1-line edits, or quick factual code questions.
+- Inspecting small files ($\le 100$ lines) or running low-output commands (`git status`, `ls`, `mkdir`).
+- Trivial scripts where initializing ledgers and wrappers introduces more token overhead than it saves.
+
+### Progressive Disclosure Directive
+Skip reference files during normal execution. Read `[references/context-taxonomy.md](./references/context-taxonomy.md)` only when auditing retention tiers. Read `[references/harness-matrix.md](./references/harness-matrix.md)` only when configuring platform-specific hooks or CLI aliases.
 
 ---
 
-## 2. The 6-Tier Context Retention Protocol
+## 2. Dynamic Script Path Resolution
 
-The agent MUST classify and govern all in-context data according to the retention hierarchy ([details in references/context-taxonomy.md](./references/context-taxonomy.md)):
+Before invoking any bundled utilities, the agent MUST resolve the `leanctx` script directory:
+1. Local Workspace: `.agents/skills/leanctx/scripts` or `skills/leanctx/scripts`
+2. Global Directory: `~/.claude/skills/leanctx/scripts`, `~/.gemini/config/skills/leanctx/scripts`, `~/.codex/skills/leanctx/scripts`, `~/.opencode/skills/leanctx/scripts`, or `~/.pi/skills/leanctx/scripts`
+3. Environment Variable: `$LEANCTX_DIR`
+
+Define `<SCRIPTS>` as the resolved directory path. On Windows environments without `python3`, use `python`.
+
+---
+
+## 3. The 6-Tier Retention & Ingress Hierarchy
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ Rank 1: Root Intent & Invariant Rules   (ALWAYS KEEP)  │
-│ Rank 2: Active Task & Blocker State    (KEEP UNTIL DONE)│
-│ Rank 3: Semantic Ledger & Contracts    (CONDENSE & KEEP)│
+│ Rank 1: Root Intent & Invariant Rules   (DISK LEDGER)  │
+│ Rank 2: Active Task & Blocker State    (DISK LEDGER)  │
+│ Rank 3: Semantic Ledger & Contracts    (DISK LEDGER)  │
 ├────────────────────────────────────────────────────────┤
-│ Rank 4: Immediate Operational Buffer   (ROLLING 2 TURNS)│
-│ Rank 5: Exploratory File Line Dumps    (EVICT ON READ)  │
-│ Rank 6: Disposable Build / Test Noise  (ZERO RETENTION) │
+│ Rank 4: Conversational Working Memory  (HARNESS BUFFER)│
+│ Rank 5: Exploratory File Reads         (INGRESS CLAMP) │
+│ Rank 6: Disposable Build / Test Noise  (INGRESS SANDBOX)
 └────────────────────────────────────────────────────────┘
 ```
 
-- **Ranks 1–3**: Maintained persistently in `.agents/memory/LEDGER.json`.
-- **Ranks 5–6**: Intercepted, truncated, or redirected to `/tmp/leanctx/<id>/`.
+- **Ranks 1–3**: Maintained persistently on disk in `.agents/memory/LEDGER.json`. Restored instantly via `ledger_tool.py rehydrate` post-compaction.
+- **Ranks 5–6**: Gated at ingress. Raw stdout and line dumps are written to disk; only concise summaries or root-cause error lines enter context history.
 
 ---
 
-## 3. 4-Phase Operational Execution
+## 4. 4-Phase Operational Execution
 
 ```mermaid
 flowchart TD
-    A["Session Start / Task Init"] --> B["Phase 1: Ingress Gating & Workspace Setup"]
+    A["Task Triggered"] --> B["Phase 1: Ingress Gating & Workspace Setup"]
     B --> C["Phase 2: Atomic State Ledger Initialization"]
-    C --> D["Phase 3: Execution with Output Sandboxing & Subagent Sharding"]
-    D --> E["Phase 4: Milestone State Condensation & Micro-Anchor Injection"]
+    C --> D["Phase 3: Execution via Sandboxing & Subagent Sharding"]
+    D --> E["Phase 4: Milestone Condensation & Compaction Recovery"]
     E --> D
 ```
 
 ### Phase 1: Ingress Gating & Workspace Setup
-1. Verify scratch directory permissions (`0700` mode) and `.gitignore` hygiene:
+1. Verify scratch directory permissions (`0700` mode), FIFO log rotation, and `.gitignore` hygiene:
    ```bash
-   python3 skills/leanctx/scripts/session_init.py
+   python3 "<SCRIPTS>/session_init.py"
    ```
-2. In harnesses with hook support (Antigravity), verify `skills/leanctx/hooks.json` is loaded.
+2. In harnesses with hook support (Antigravity), verify `skills/leanctx/hooks.json` is active.
 
 ### Phase 2: Atomic State Ledger Initialization
-1. Initialize the root intent and non-negotiable negative constraints:
+1. Initialize project objective and non-negotiable negative constraints:
    ```bash
-   python3 skills/leanctx/scripts/ledger_tool.py init \
+   python3 "<SCRIPTS>/ledger_tool.py" init \
      --goal "<Primary User Acceptance Goal>" \
      --constraints "<Constraint 1>; <Constraint 2>"
    ```
 2. Register active DAG milestone:
    ```bash
-   python3 skills/leanctx/scripts/ledger_tool.py set-task \
+   python3 "<SCRIPTS>/ledger_tool.py" set-task \
      --id "<Task ID>" \
      --desc "<Task Objective>"
    ```
 
-### Phase 3: Execution via Sandboxed Gating & Context Sharding
+### Phase 3: Execution via Output Sandboxing & Subagent Sharding
 1. **High-Volume Command Execution**:
-   - In Antigravity: `gate_tool.py` automatically wraps commands matching `(test|build|install|find|grep|log)`.
-   - In Claude Code / OpenCode / Pi: The agent MUST execute high-volume commands via `lean_run.py`:
+   - In Antigravity: `gate_tool.py` automatically wraps commands matching high-volume build/test executables.
+   - In Claude Code / OpenCode / Pi / Codex: Execute build/test commands via `lean_run.py`:
      ```bash
-     python3 skills/leanctx/scripts/lean_run.py "<test_or_build_command>"
+     python3 "<SCRIPTS>/lean_run.py" "<test_or_build_command>"
      ```
-   - Succeeded commands emit tail 25 lines. Failed commands emit Head 25 + Tail 25 diagnostic sandwiches.
-2. **File Reading Line Clamping**:
+   - On success: Emits tail 25 lines.
+   - On failure: Emits Head 15 lines, root-cause error lines from the middle of the log, and Tail 15 lines.
+2. **Drilling Down into Full Logs on Command Failure**:
+   - If the summary misses root-cause stack traces, inspect the full log saved in `/tmp/leanctx/<id>/last_exec.log`:
+     ```bash
+     grep -n -C 5 -i -E "error|fail|panic|exception" /tmp/leanctx/<id>/last_exec.log
+     python3 "<SCRIPTS>/lean_read.py" /tmp/leanctx/<id>/last_exec.log --start <line> --end <line+50>
+     ```
+3. **File Reading Line Clamping**:
    - Never ingest entire multi-hundred line files without line bounds.
-   - Use targeted ranges or invoke `lean_read.py`:
+   - Use targeted line ranges or invoke `lean_read.py`:
      ```bash
-     python3 skills/leanctx/scripts/lean_read.py <path> --start 1 --end 120
+     python3 "<SCRIPTS>/lean_read.py" path/to/large_file.py --start 1 --end 150
      ```
-3. **Subagent Context Sharding**:
-   - For broad codebase scans or multi-step debugging, launch an isolated subagent (`invoke_subagent`).
-   - The subagent absorbs Rank 5/6 noise and returns only a 50-token semantic finding to the coordinator.
+4. **Subagent Context Sharding**:
+   - For broad codebase scans or multi-step debugging, launch an isolated subagent (`invoke_subagent` in Antigravity, Task agent in Claude Code, child agent in OpenCode).
+   - In single-agent harnesses without subagents: run discovery via targeted single-line CLI commands piping to `grep` or temporary files. Do not dump directory trees into conversation turns.
 
-### Phase 4: State Condensation & Micro-Anchor Injection
+### Phase 4: State Condensation & Compaction Recovery
 1. After completing an execution milestone, update modified files and decisions in the ledger:
    ```bash
-   python3 skills/leanctx/scripts/ledger_tool.py add-file --file "<path>" --status "verified"
-   python3 skills/leanctx/scripts/ledger_tool.py add-decision --text "<Verified decision>"
+   python3 "<SCRIPTS>/ledger_tool.py" add-file --file "<path>" --status "verified"
+   python3 "<SCRIPTS>/ledger_tool.py" add-decision --text "<Verified decision>"
    ```
-2. Generate and maintain the single-line micro-anchor ($\le 60$ tokens) in active context:
+2. Emit the single-line micro-anchor ($\le 60$ tokens) in active context:
    ```bash
-   python3 skills/leanctx/scripts/ledger_tool.py anchor
+   python3 "<SCRIPTS>/ledger_tool.py" anchor
    ```
-3. NEVER dump full raw JSON into chat prompts. Keep long-term state on disk.
+3. **Post-Compaction Recovery Protocol**:
+   - When the host harness triggers context compaction or when resuming an existing session:
+     ```bash
+     python3 "<SCRIPTS>/ledger_tool.py" rehydrate
+     ```
+   - Restores root intent, negative constraints, active task, and touched files without asking the user to repeat requirements.
 
 ---
 
-## 4. Multi-Harness Integration Guide
+## 5. Verifiable Performance Targets
 
-Reference [references/harness-matrix.md](./references/harness-matrix.md) for detailed configuration across:
-- **Google Antigravity / Gemini CLI**: Automated via `skills/leanctx/hooks.json`.
-- **Claude Code**: Directives enforce `lean_run.py`, `lean_read.py`, and `ledger_tool.py`.
-- **OpenCode & Pi Agent**: Standard CLI wrappers in `skills/leanctx/scripts/`.
-- **Codex**: Procedural shell piping and ledger offloading.
-
----
-
-## 5. Telemetry & Cost Verification
-
-Evaluate active context watermarks, Signal-to-Noise Ratio (SNR), and cost estimates:
-```bash
-# Evaluate token consumption and SNR
-python3 skills/leanctx/scripts/telemetry.py --file .agents/memory/LEDGER.json
-python3 skills/leanctx/scripts/telemetry.py --compare .agents/memory/LEDGER.json /path/to/transcript.jsonl
-```
-SLA Targets:
-- Active Context Watermark: $\le 8,000$ tokens.
-- Cumulative Cost Delta: $\ge 80\%$ reduction against baseline.
-- Constraint Drift Score: $0\%$ drift across 30+ turns.
-- Signal-to-Noise Ratio (SNR): $\ge 85\%$ across all active turns.
+- **Tool Ingress Reduction**: $\ge 80\%$ reduction in tool output tokens entering conversation history.
+- **Dynamic Context Growth Rate**: Session context growth bounded to $\le 5,000$ tokens per 10 execution turns (excluding base harness system prompt).
+- **Compaction Recovery Invariance**: 100% retention of Rank 1 constraints and active task state post-compaction.
+- **Root-Cause Error Capture**: 100% capture of compiler panics and syntax errors via smart log extraction.

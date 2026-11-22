@@ -29,6 +29,16 @@ class TestLeanctxBenchmark(unittest.TestCase):
         self.assertEqual(results["leanctx"]["constraint_retention_pct"], 100.0)
         self.assertLess(results["leanctx"]["final_watermark_tokens"], 8000)
 
+    def test_ten_real_world_scenarios(self):
+        runner = benchmark.ScenarioRunner()
+        res = runner.run_all()
+        summary = res["summary"]
+        self.assertEqual(summary["total_scenarios"], 10)
+        self.assertEqual(summary["passed_scenarios"], 10)
+        self.assertTrue(summary["all_passed"])
+        self.assertGreaterEqual(summary["overall_token_savings_pct"], 80.0)
+        self.assertGreaterEqual(summary["overall_line_reduction_pct"], 80.0)
+
 
 class TestLeanctxSessionInit(unittest.TestCase):
     def setUp(self):

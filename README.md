@@ -141,6 +141,16 @@ python3 skills/single-pass-executor/scripts/verify_contracts.py path/to/source_o
 python3 skills/grill/scripts/grill_checker.py --file path/to/file.py
 ```
 
+### 6. Run leanctx Context Hygiene & Empirical Benchmark
+```bash
+# Run 10-scenario empirical benchmark suite and multi-turn simulation
+python3 skills/leanctx/scripts/benchmark.py --report skills/leanctx/references/benchmark_report.md
+
+# Sandboxed execution and line-budget clamping
+python3 skills/leanctx/scripts/lean_run.py "pytest -v"
+python3 skills/leanctx/scripts/lean_read.py package-lock.json --max 150
+```
+
 ---
 
 ## 🧪 Testing & Verification
@@ -156,6 +166,9 @@ python3 skills/telescope/tests/test_telescope.py
 
 # Test deep-tester combinatorial matrix generator and formatters
 python3 skills/deep-tester/tests/test_deep_tester.py
+
+# Test leanctx context hygiene, sandboxing, and 10 benchmark scenarios
+python3 skills/leanctx/tests/test_leanctx.py
 ```
 
 ---

@@ -75,7 +75,6 @@ def main():
 
     raw_conv_id = os.environ.get("CONVERSATION_ID", "default")
     scratch_dir = get_scratch_dir(raw_conv_id)
-    rotate_logs(scratch_dir, max_files=10)
 
     log_file = os.path.join(scratch_dir, f"exec_{int(time.time())}_{os.getpid()}.log")
     last_log = os.path.join(scratch_dir, "last_exec.log")
@@ -98,7 +97,8 @@ def main():
             f.write(f"\n[leanctx: COMMAND TIMED OUT after {timeout_sec} seconds]\n")
         exit_code = 124
 
-    # Update last_exec.log symlink or copy
+    # Update last_exec.log symlink or copy and enforce FIFO log rotation
+    rotate_logs(scratch_dir, max_files=10)
     try:
         if hasattr(os, "symlink"):
             if os.path.islink(last_log) or os.path.exists(last_log):
@@ -127,7 +127,7 @@ def main():
         else:
             # Smart root-cause error discovery in logs (filtering benign false-positives)
             err_re = re.compile(r"\b(error|fail|failed|failure|exception|traceback|panic|panicked|fatal|syntaxerror|typeerror)\b", re.IGNORECASE)
-            benign_re = re.compile(r"\b(0 errors|0 failed|error_handling|errors?: 0|passed)\b", re.IGNORECASE)
+            benign_re = re.compile(r"\b(0 errors|0 failed|error_handling|panic handling|during panic|errors?: 0|passed)\b", re.IGNORECASE)
 
             # Prioritize genuine failure lines, scanning from bottom to top for actual crash point
             err_indices = [
@@ -141,8 +141,8 @@ def main():
             if err_indices:
                 # Target the last genuine error cluster (where compiler/test crash occurred)
                 target_err = err_indices[-1]
-                start_err = max(15, target_err - 5)
-                end_err = min(total_lines - 15, target_err + 20)
+                start_err = max(15, target_err - 10)
+                end_err = min(total_lines - 15, target_err + 12)
                 if start_err < end_err:
                     sys.stdout.write(f"\n--- ROOT-CAUSE ERROR CONTEXT (Lines {start_err + 1} to {end_err}) ---\n")
                     sys.stdout.write("".join(clamp_lines(lines[start_err:end_err])))

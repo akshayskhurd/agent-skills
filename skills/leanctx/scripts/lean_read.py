@@ -25,6 +25,17 @@ def main():
         print(f"Error: Path does not exist or is not a regular file: {args.path}", file=sys.stderr)
         sys.exit(1)
 
+    # Guard against binary files containing null bytes
+    try:
+        with open(args.path, "rb") as bf:
+            sample = bf.read(1024)
+            if b"\x00" in sample:
+                file_size = os.path.getsize(args.path)
+                sys.stdout.write(f"[leanctx: Binary file detected ({file_size} bytes). Raw binary content suppressed to protect context window]\n")
+                return
+    except OSError:
+        pass
+
     start_idx = max(1, args.start) - 1
     max_to_fetch = args.max
     if args.end is not None and args.end >= args.start:

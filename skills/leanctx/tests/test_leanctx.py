@@ -565,6 +565,52 @@ class TestLeanctxUniversalCLIWrappers(unittest.TestCase):
         worker_file = Path(ws) / ".agents" / "memory" / "LEDGER_worker_99.json"
         self.assertTrue(worker_file.exists())
 
+    def test_lean_read_binary_file_suppression(self):
+        bin_file = Path(self.test_dir) / "binary.wasm"
+        bin_file.write_bytes(b"\x00asm\x01\x00\x00\x00\x01\x08\x01`\x01\x7f\x00\x03\x02\x01\x00")
+
+        script = SCRIPTS_DIR / "lean_read.py"
+        res = subprocess.run([sys.executable, str(script), str(bin_file)], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("Binary file detected", res.stdout)
+        self.assertIn("suppressed to protect context window", res.stdout)
+
+    def test_concurrent_ledger_write_contention(self):
+        script = SCRIPTS_DIR / "ledger_tool.py"
+        ws = self.test_dir
+
+        subprocess.run([sys.executable, str(script), "-w", ws, "init", "--goal", "Concurrency Test"], check=True)
+
+        import threading
+        errors = []
+
+        def worker(idx: int):
+            try:
+                res = subprocess.run(
+                    [sys.executable, str(script), "-w", ws, "add-decision", "--text", f"Concurrent decision {idx}"],
+                    capture_output=True,
+                    text=True
+                )
+                if res.returncode != 0:
+                    errors.append(f"Worker {idx} failed: {res.stderr}")
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(errors), 0)
+
+        ledger_path = Path(ws) / ".agents" / "memory" / "LEDGER.json"
+        with open(ledger_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        decisions = data["rank3_semantic_ledger"]["decisions"]
+        self.assertEqual(len(decisions), 10)
+
 
 class TestLeanctxTelemetry(unittest.TestCase):
     def test_estimate_tokens(self):

@@ -37,9 +37,35 @@ end tell
     return res
 
 
+def ensure_gemini_tab() -> None:
+    """Find and focus the Google Gemini tab across open Chrome windows."""
+    apple_script = '''
+tell application "Google Chrome"
+    repeat with w in windows
+        set tabIdx to 1
+        repeat with t in tabs of w
+            if URL of t contains "gemini.google.com" then
+                set active tab index of w to tabIdx
+                set index of w to 1
+                activate
+                return "OK"
+            end if
+            set tabIdx to tabIdx + 1
+        end repeat
+    end repeat
+    return "NOT_FOUND"
+end tell
+'''
+    proc = subprocess.run(["osascript", "-e", apple_script], capture_output=True, text=True)
+    if proc.returncode != 0 or proc.stdout.strip() != "OK":
+        raise RuntimeError("Google Gemini tab (gemini.google.com) not found in any open Chrome window.")
+    time.sleep(0.3)
+
+
 def send_prompt_and_get_response(prompt_text: str, timeout_sec: int = 180) -> str:
     """Send text to active Gemini tab and poll until response generation completes."""
-    # 1. Verify URL
+    # 1. Find and focus Gemini tab
+    ensure_gemini_tab()
     url = execute_chrome_js("return window.location.href;")
     if "gemini.google.com" not in url:
         raise RuntimeError(f"Active tab is not Google Gemini. Found URL: {url}")

@@ -12,6 +12,7 @@ Every skill is built on two-tier progressive disclosure, strictly imperative dir
 - **High Token Density**: NEVER write wasteful ASCII art, redundant greetings, or repetitive boilerplate. Ensure maximum information density.
 - **Strict AST Sandboxing**: NEVER execute unvalidated dynamic evaluation (`eval()`, `exec()`, `shell=True`). All runtime expression filters MUST traverse safe AST nodes (`ast.Constant`, `ast.Name`, `ast.Compare`, `ast.BoolOp`, `ast.UnaryOp`, `ast.List`, `ast.Tuple`).
 - **Zero Secret / PII Leaks**: NEVER commit personal email addresses or hostnames. All commits MUST use `akshayskhurd <34104737+akshayskhurd@users.noreply.github.com>`.
+- **Frontier Model Peer Review**: The agent MUST consult the Gemini Chat Neon frontier model via `bin/gemini_chrome_bridge.py` whenever complex architectural critique, deep design suggestions, or adversarial reviews are required.
 
 ---
 
@@ -23,6 +24,7 @@ Every skill is built on two-tier progressive disclosure, strictly imperative dir
 5. **`grill`**: Exhaustive 9-persona 5W1H adversarial review gate (`skills/grill/scripts/grill_checker.py`).
 6. **`learn`**: Memory and rule distillation engine (`skills/learn/scripts/instruction_updater.py`).
 7. **`leanctx`**: Universal zero-drift context optimizer and living state ledger (`skills/leanctx/scripts/gate_tool.py`).
+8. **`gemini-neon-bridge`**: Live Gemini Chat Neon peer reviewer and architect (`bin/gemini_chrome_bridge.py`).
 
 ---
 

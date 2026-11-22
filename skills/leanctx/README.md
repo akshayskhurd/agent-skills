@@ -11,11 +11,34 @@
 
 ```mermaid
 flowchart LR
-    A["Raw Tool Output (10k+ tok)"] -->|"Noise Gate"| B["lean_run / lean_read Sandbox"]
-    B -->|"-94.4% Clamped Signal"| C["Active Context Window (&lt;= 8k tok)"]
-    C -->|"State Stream"| D["Living Ledger (LEDGER.json)"]
-    D -.->|"Micro-Anchor Loop (&lt;= 60 tok)"| C
-    D ==>|"Post-Compaction rehydrate"| C
+    subgraph INGRESS ["1. Ingress Layer"]
+        A["Raw Tool Output<br/>(10,000+ Raw Tokens)"]
+        B["lean_run & lean_read<br/>Physical Noise Gate"]
+    end
+
+    subgraph MEMORY ["2. Active Attention"]
+        C["Working Context Window<br/>(Watermark ≤ 8,000 tok)"]
+    end
+
+    subgraph DISK ["3. Persistent State"]
+        D["Living State Ledger<br/>(.agents/memory/LEDGER.json)"]
+    end
+
+    A -->|"Physical Stdout"| B
+    B -->|"-94.4% Clamped Signal"| C
+    C -->|"Milestone Updates"| D
+    D -.->|"Micro-Anchor Loop (≤ 60 tok)"| C
+    D ==>|"Compaction rehydrate"| C
+
+    classDef redBox fill:#37111e,stroke:#f43f5e,stroke-width:1.5px,color:#fda4af;
+    classDef cyanBox fill:#0c2d48,stroke:#38bdf8,stroke-width:1.5px,color:#bae6fd;
+    classDef greenBox fill:#063828,stroke:#34d399,stroke-width:1.5px,color:#a7f3d0;
+    classDef purpleBox fill:#261342,stroke:#a78bfa,stroke-width:1.5px,color:#ddd6fe;
+
+    class A redBox;
+    class B cyanBox;
+    class C greenBox;
+    class D purpleBox;
 ```
 
 <details>

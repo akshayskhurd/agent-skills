@@ -79,6 +79,9 @@ flowchart TD
     C --> D["Phase 3: Execution via Sandboxing & Subagent Sharding"]
     D --> E["Phase 4: Milestone Condensation & Compaction Recovery"]
     E --> D
+
+    classDef phase fill:#0f172a,stroke:#38bdf8,stroke-width:1.5px,color:#f8fafc;
+    class A,B,C,D,E phase;
 ```
 
 ### Phase 1: Ingress Gating & Workspace Setup
